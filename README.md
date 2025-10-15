@@ -5,10 +5,15 @@ This repository contains the analysis and Tableau dashboard build for DC Metrora
 ## Quick Start
 1. Create a virtual environment and install requirements:
    ```bash
-   python3 -m venv .venv # macOS/Linux
-   python -m venv .venv  # Windows
-   source .venv/bin/activate  # macOS/Linux
-   .\.venv\Scripts\activate # Windows
+   # macOS/Linux
+   python3 -m venv .venv
+   source .venv/bin/activate
+   ```
+
+   ```bash
+   # Windows
+   python -m venv .venv  
+   .\.venv\Scripts\activate
    pip install -r requirements.txt
    ```
 
