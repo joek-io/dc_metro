@@ -1,0 +1,11 @@
+pandas
+numpy
+scipy
+statsmodels
+pingouin
+matplotlib
+plotly
+geopandas
+scikit-learn
+openpyxl
+pyjanitor
