@@ -19,7 +19,8 @@ This repository contains the analysis and Tableau dashboard build for DC Metrora
    ```
 
 2. Place WMATA ridership CSV exports here: `data_raw/`
-   - Example filenames: `ridership_2019.csv`, `ridership_2023.csv`, `ridership_2024.csv`, `ridership_2025.csv`
+   - note that WMATA changed how data was calculated after 2019 and nontapped and tapped have to be combined post 2019. 
+   - Example filenames: `ridership_2019.csv`, `ridership_2023_tapped.csv`, `ridership_2023_nontapped.csv`, `ridership_2024_tapped.csv`, `ridership_2024_nontapped.csv`,  `ridership_2025_tapped.csv`, `ridership_2025_nontapped.csv`
 
 3. Place DC Open Data geometry here: `data_geo/`
    - `metro_stations.geojson` (Metro Stations - Regional)
