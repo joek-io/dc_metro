@@ -118,14 +118,20 @@ def derive_day_type(service_type: str, day_of_week: str) -> str:
     return np.nan
 
 def _parse_date_series(s: pd.Series) -> pd.Series:
+    # Excel serials
     if pd.api.types.is_numeric_dtype(s):
         return pd.to_datetime(s, origin="1899-12-30", unit="D", errors="coerce")
-    probe = next((str(v) for v in s.dropna().head(50).tolist() if str(v).strip()), "").strip()
+
+    # Probe a few values to pick an explicit format when possible
+    probe = next((str(v).strip() for v in s.dropna().head(50).tolist() if str(v).strip()), "")
+
     if re.match(r"^\d{4}-\d{2}-\d{2}$", probe):
         return pd.to_datetime(s, format="%Y-%m-%d", errors="coerce")
     if re.match(r"^\d{1,2}/\d{1,2}/\d{4}$", probe):
         return pd.to_datetime(s, format="%m/%d/%Y", errors="coerce")
-    return pd.to_datetime(s, errors="coerce")
+
+    # Mixed formats: avoid the warning by specifying format="mixed"
+    return pd.to_datetime(s, errors="coerce", format="mixed")
 
 # Expected columns
 
