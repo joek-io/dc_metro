@@ -15,7 +15,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          lfs: false  # set to true if you actually store large files via LFS
+          lfs: false
 
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
@@ -28,15 +28,13 @@ jobs:
           python -m pip install --upgrade pip
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
           pip install pandas openpyxl pyogrio geopandas shapely pyproj
-          # test utilities
           pip install pytest flake8
 
-      - name: Create fixture data (ridership + DC stations)
+      - name: Create fixture data
         run: |
           set -e
           mkdir -p data_raw data_geo results/tables data_clean
 
-          # 2019 baseline (monthly, per station, per period/daytype)
           printf '%s\n' \
             'Station,Year,Month,Time_Period,Day_Type,Entries' \
             'GALLERY PL-CHINATOWN,2019,1,AM,Weekday,100' \
@@ -51,7 +49,6 @@ jobs:
             'UNION STATION,2019,1,AM,Weekend,50' \
             > data_raw/ridership_2019.csv
 
-          # 2023 split files: tapped and non-tapped (same schema: Entries column)
           printf '%s\n' \
             'Station,Year,Month,Time_Period,Day_Type,Entries' \
             'GALLERY PL-CHINATOWN,2023,1,AM,Weekday,82' \
@@ -72,7 +69,6 @@ jobs:
             'UNION STATION,2023,1,AM,Weekend,2' \
             > data_raw/ridership_2023_nontapped.csv
 
-          # Minimal GeoJSON for DC stations (NAME attribute expected by script)
           printf '%s\n' \
             '{' \
             '  "type": "FeatureCollection",' \
@@ -86,102 +82,4 @@ jobs:
             '    },' \
             '    {' \
             '      "type": "Feature",' \
-            '      "properties": { "NAME": "UNION STATION" },' \
-            '      "geometry": { "type": "Point", "coordinates": [ -77.0075, 38.8971 ] }' \
-            '    }' \
-            '  ]' \
-            '}' \
-            > data_geo/metro_stations.geojson
-
-      # Re-encode fixtures to Tableau "Download → Data → CSV" format (UTF-16LE, comma CSV)
-      - name: Convert fixture CSVs to UTF-16LE (comma CSV)
-        run: |
-          set -e
-          for f in data_raw/*.csv; do
-            [ -f "$f" ] || continue
-            iconv -f UTF-8 -t UTF-16LE "$f" > "${f}.utf16le"
-            mv "${f}.utf16le" "$f"
-            echo "Re-encoded $f to UTF-16LE"
-          done
-
-      - name: Run 01_clean_data.py
-        run: |
-          set -e
-          python analysis/01_clean_data.py
-
-      # ---- Schema check on cleaned output
-      - name: Verify schema of station_monthly_recovery.csv
-        run: |
-          set -e
-          python -c "import pandas as pd; df=pd.read_csv('data_clean/station_monthly_recovery.csv'); exp={'Station','Year','Month','Time_Period','Day_Type','Entries','Entries_2019','Recovery_Ratio','Denom_Flag'}; missing=exp-set(df.columns); assert not missing, f'Missing columns: {missing}'; assert len(df)>0, 'No rows in output'; print('✅ Schema OK; rows=', len(df))"
-
-      - name: Run 02_inference_tests.py
-        run: |
-          set -e
-          python analysis/02_inference_tests.py
-
-      # ---- Sanity check on inference JSON
-      - name: Verify inference outputs
-        run: |
-          set -e
-          python -c "import json, pathlib; p=pathlib.Path('results/tables/stats_summary.json'); assert p.exists(), 'stats_summary.json missing'; d=json.loads(p.read_text()); assert d.get('status') in {'ok','warning'}, f'Bad status: {d.get('status')}'; # If weekend_vs_weekday exists, check p-value range; if not, it's okay for fixtures; print('✅ Inference JSON OK')"
-
-      - name: Run 03_tableau_export.py
-        run: |
-          set -e
-          python analysis/03_tableau_export.py
-
-      # ---- Quick check that Tableau export joined geometry
-      - name: Verify tableau_recovery.csv
-        run: |
-          set -e
-          python -c "import pandas as pd; df=pd.read_csv('data_clean/tableau_recovery.csv'); assert {'Longitude','Latitude'}.issubset(df.columns), 'Missing geometry cols'; cov=df[['Longitude','Latitude']].notna().mean().mean(); assert cov>0.5, f'Low geometry coverage: {cov:.2%}'; print('✅ Tableau export OK; rows=', len(df))"
-
-      # ---- Optional lint (does not fail build). To enforce, remove `|| true`.
-      - name: Lint (flake8)
-        run: |
-          flake8 analysis --max-line-length=100 || true
-
-      # ---- Minimal pytest suite written on-the-fly (validates checked-in scripts end-to-end)
-      - name: Write minimal pytest suite
-        run: |
-          set -e
-          mkdir -p tests
-          printf '%s\n' \
-            'import json, pandas as pd, pathlib as pl' \
-            '' \
-            'def test_clean_output_exists_and_shape():' \
-            '    p = pl.Path("data_clean/station_monthly_recovery.csv")' \
-            '    assert p.exists(), "cleaned CSV missing"' \
-            '    df = pd.read_csv(p)' \
-            '    assert len(df) > 0, "cleaned CSV has no rows"' \
-            '    cols = {"Station","Year","Month","Time_Period","Day_Type","Entries","Entries_2019","Recovery_Ratio","Denom_Flag"}' \
-            '    assert cols.issubset(df.columns), f"Missing columns: {cols - set(df.columns)}"' \
-            '' \
-            'def test_inference_json_status():' \
-            '    p = pl.Path("results/tables/stats_summary.json")' \
-            '    assert p.exists(), "inference summary missing"' \
-            '    d = json.loads(p.read_text())' \
-            '    assert d.get("status") in {"ok","warning"}, f"Unexpected status: {d.get('\'status\'')}"' \
-            '' \
-            'def test_tableau_export_geometry():' \
-            '    p = pl.Path("data_clean/tableau_recovery.csv")' \
-            '    assert p.exists(), "tableau export CSV missing"' \
-            '    df = pd.read_csv(p)' \
-            '    assert {"Longitude","Latitude"}.issubset(df.columns), "Missing geometry columns"' \
-            > tests/test_pipeline.py
-
-      - name: Run pytest
-        run: |
-          set -e
-          pytest -q
-
-      - name: Upload artifacts (outputs)
-        uses: actions/upload-artifact@v4
-        with:
-          name: pipeline-outputs-${{ matrix.python-version }}
-          path: |
-            data_clean/**
-            results/tables/**
-            tests/**
-          if-no-files-found: warn
+            '      "properties": { "NAME"
