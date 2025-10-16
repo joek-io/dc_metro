@@ -18,13 +18,13 @@ YEARS = [2019, 2023, 2024, 2025]
 # FILE READING HELPERS
 
 def _looks_utf16(p: Path) -> bool:
-    """Check if file starts with UTF-16LE BOM or contains NULs in first bytes."""
+    """Return True if file likely UTF-16LE (BOM or NULs in first bytes)."""
     with open(p, "rb") as fb:
         head = fb.read(4)
     return head.startswith(b"\xff\xfe") or b"\x00" in head
 
 def _sniff_sep(sample: str) -> str:
-    """Pick a delimiter from sample text, preferring tab if present."""
+    """Choose a delimiter from sample text, preferring tab if present."""
     tabs = sample.count("\t")
     commas = sample.count(",")
     semis = sample.count(";")
@@ -33,6 +33,15 @@ def _sniff_sep(sample: str) -> str:
     if semis > commas:
         return ";"
     return ","  # default
+
+def _clean_headers(df: pd.DataFrame) -> pd.DataFrame:
+    """Strip BOMs, trim, and collapse spaces in column names."""
+    def _fix(c):
+        c = str(c).replace("\ufeff", "")  # BOM
+        c = re.sub(r"\s+", " ", c).strip()
+        return c
+    df.columns = [_fix(c) for c in df.columns]
+    return df
 
 def read_table(p: Path) -> pd.DataFrame:
     """Read CSV/Excel and sniff encoding + delimiter per file."""
@@ -43,14 +52,15 @@ def read_table(p: Path) -> pd.DataFrame:
         except Exception:
             return pd.read_excel(p)
 
-    # UTF-16LE CSV/TSV (Tableau Download → Data often is UTF-16LE TSV)
+    # UTF-16LE CSV
     if _looks_utf16(p):
         with open(p, "r", encoding="utf-16le", errors="replace", newline="") as f:
             sample = "".join([f.readline() for _ in range(25)])
         sep = _sniff_sep(sample)
-        return pd.read_csv(p, encoding="utf-16le", sep=sep, engine="python")
+        df = pd.read_csv(p, encoding="utf-16le", sep=sep, engine="python")
+        return _clean_headers(df)
 
-    # UTF-8 CSV/TSV
+    # UTF-8 CSV
     import csv
     with open(p, "r", encoding="utf-8", errors="replace", newline="") as f:
         sample = "".join([f.readline() for _ in range(25)])
@@ -58,7 +68,8 @@ def read_table(p: Path) -> pd.DataFrame:
         sep = csv.Sniffer().sniff(sample, delimiters=[",", ";", "\t", "|"]).delimiter
     except Exception:
         sep = _sniff_sep(sample)
-    return pd.read_csv(p, encoding="utf-8", sep=sep, engine="python")
+    df = pd.read_csv(p, encoding="utf-8", sep=sep, engine="python")
+    return _clean_headers(df)
 
 # DATA CLEANING HELPERS
 
@@ -72,23 +83,75 @@ def normalize_station(x: str) -> str:
     s = re.sub(r"\s+", " ", s).strip() # collapse spaces
     return s or "UNKNOWN"
 
-# Map for cleaning time period names
-TIME_PERIOD_MAP = {
-    "AM PEAK": "AM", "AM": "AM",
-    "MIDDAY": "MIDDAY", "MID DAY": "MIDDAY",
-    "PM PEAK": "PM", "PM": "PM",
-    "EVENING": "EVENING", "EVE": "EVENING"
-}
-
+# Acceptable final time-period buckets
 VALID_TIME_PERIODS = {"AM", "MIDDAY", "PM", "EVENING"}
 VALID_DAY_TYPES = {"WEEKDAY", "WEEKEND"}
 
-def normalize_time_period(x: str) -> str:
-    """Convert time period text to standard short form."""
-    if pd.isna(x):
+def normalize_time_period(x: str):
+    """
+    Map many WMATA variants and explicit time ranges into {AM, MIDDAY, PM, EVENING}.
+    Handles:
+      - 'AM Peak', 'Midday', 'PM Peak', 'Evening'
+      - Prefixes like 'Weekday - AM Peak'
+      - Ranges like '4:00 AM - 9:59 AM', '10:00 AM - 2:59 PM', etc.
+    Unknowns -> np.nan.
+    """
+    if x is None or (isinstance(x, float) and pd.isna(x)):
         return np.nan
-    t = str(x).upper().strip()
-    return TIME_PERIOD_MAP.get(t, t)
+
+    t = str(x)
+    t = t.replace("\u00A0", " ")               # non-breaking space
+    t = re.sub(r"[–—]+", "-", t)               # long dash -> hyphen
+    t = re.sub(r"\s+", " ", t).strip().upper() # collapse spaces
+
+    # Remove leading day-type prefixes like 'WEEKDAY - ' or 'SATURDAY - '
+    t = re.sub(r'^(WEEKDAY|SATURDAY|SUNDAY|WEEKEND|HOLIDAY)\s*-\s*', '', t)
+
+    # Exact matches
+    if t in {"AM", "AM PEAK"}:
+        return "AM"
+    if t in {"MIDDAY", "MID DAY", "MID-DAY"}:
+        return "MIDDAY"
+    if t in {"PM", "PM PEAK"}:
+        return "PM"
+    if t in {"EVENING", "EVE", "LATE EVENING", "NIGHT"}:
+        return "EVENING"
+
+    # Time range pattern: 'H:MM AM - H:MM PM'
+    m = re.search(r'(\d{1,2}):\d{2}\s*(AM|PM)\s*-\s*(\d{1,2}):\d{2}\s*(AM|PM)', t)
+    if m:
+        sh, sap = int(m.group(1)), m.group(2)  # start hour and AM/PM
+        # Convert start hour to 24h
+        if sap == "AM":
+            start_24 = 0 if sh == 12 else sh
+        else:
+            start_24 = 12 if sh == 12 else sh + 12
+
+        # Bucket by start time
+        # AM   : 05:00–09:59
+        # MID  : 10:00–14:59
+        # PM   : 15:00–18:59
+        # EVE  : 19:00–23:59 and 00:00–04:59
+        if   5 <= start_24 <= 9:   return "AM"
+        elif 10 <= start_24 <= 14: return "MIDDAY"
+        elif 15 <= start_24 <= 18: return "PM"
+        else:                      return "EVENING"
+
+    # Keyword rules
+    if "EARLY AM" in t or ("AM" in t and "PEAK" in t):
+        return "AM"
+    if "MID" in t:
+        return "MIDDAY"
+    if "PM" in t and "PEAK" in t:
+        return "PM"
+    if any(k in t for k in ["EVEN", "NIGHT", "LATE"]):
+        return "EVENING"
+
+    # Non-analytical labels -> drop
+    if any(k in t for k in ["ALL DAY", "OFF-PEAK", "OFF PEAK", "WEEKEND", "HOLIDAY"]):
+        return np.nan
+
+    return np.nan
 
 def derive_day_type(service_type: str, day_of_week: str) -> str:
     """Use 'Service Type' or 'Day of Week' to classify as WEEKDAY or WEEKEND."""
@@ -96,7 +159,7 @@ def derive_day_type(service_type: str, day_of_week: str) -> str:
         st = service_type.strip().upper()
         if st == "WEEKDAY": return "WEEKDAY"
         if st in {"SATURDAY", "SUNDAY"}: return "WEEKEND"
-        if st == "HOLIDAY": return "WEEKDAY"  # change to WEEKEND if desired
+        if st == "HOLIDAY": return "WEEKDAY"  # adjust if you prefer holidays as WEEKEND
     if isinstance(day_of_week, str) and day_of_week.strip():
         d = day_of_week.strip().upper()
         return "WEEKEND" if d in {"SATURDAY", "SUNDAY"} else "WEEKDAY"
@@ -118,7 +181,7 @@ def load_wmata_tableau(p: Path, default_year: int, log: dict) -> pd.DataFrame:
     df = read_table(p)
     log.setdefault("files_read", []).append({"path": str(p), "rows": int(len(df)), "cols": df.columns.tolist()})
 
-    # Ensure all expected columns exist
+    # Ensure all expected columns exist (some views may omit a few)
     for c in EXPECTED_COLS:
         if c not in df.columns:
             df[c] = np.nan
@@ -132,15 +195,19 @@ def load_wmata_tableau(p: Path, default_year: int, log: dict) -> pd.DataFrame:
     # Clean station names
     df["Station"] = df["Station Name"].map(normalize_station)
 
-    # Standardize time periods
+    # Map time periods and log distinct raw vs. mapped values
     df["Time_Period"] = df["Time Period"].map(normalize_time_period)
+    orig_unique = sorted(pd.Series(df["Time Period"].astype(str).str.strip().str.upper().unique()).tolist())
+    mapped_unique = sorted(pd.Series(df["Time_Period"].astype(str).unique()).tolist())
+    log.setdefault("time_period_observed", {})[str(p)] = {
+        "original_unique": orig_unique[:200],
+        "mapped_unique": mapped_unique[:200],
+    }
 
     # Derive weekday/weekend type
-    df["Day_Type"] = [
-        derive_day_type(st, dow) for st, dow in zip(df["Service Type"], df["Day of Week"])
-    ]
+    df["Day_Type"] = [derive_day_type(st, dow) for st, dow in zip(df["Service Type"], df["Day of Week"])]
 
-    # Combine tapped + non-tapped counts (fallback to Entries if needed)
+    # Combine tapped + non-tapped counts
     tapped = pd.to_numeric(df["Avg Daily Tapped Entries"], errors="coerce")
     nontap = pd.to_numeric(df["NonTapped Entries"], errors="coerce")
     alt_entries = pd.to_numeric(df["Entries"], errors="coerce")
@@ -152,11 +219,20 @@ def load_wmata_tableau(p: Path, default_year: int, log: dict) -> pd.DataFrame:
     keep = ["Station", "Year", "Month", "Time_Period", "Day_Type", "Entries"]
     df = df[keep].copy()
 
-    # Warn if there are unexpected values
+    # Drop rows without a mapped period to keep analysis clean
+    before = len(df)
+    df = df[df["Time_Period"].isin(VALID_TIME_PERIODS) | df["Time_Period"].isna()].copy()
+    dropped = before - len(df)
+    if dropped > 0:
+        log.setdefault("warnings", []).append(f"Dropped {dropped} rows with unmapped Time_Period in {p.name}")
+
+    # Warn if any mapped but not valid
     tp_bad = df["Time_Period"].notna() & (~df["Time_Period"].isin(VALID_TIME_PERIODS))
     dt_bad = df["Day_Type"].notna() & (~df["Day_Type"].isin(VALID_DAY_TYPES))
     if int(tp_bad.sum()) > 0:
-        log.setdefault("warnings", []).append(f"Unrecognized Time_Period values: {int(tp_bad.sum())}")
+        log.setdefault("warnings", []).append(
+            f"Unrecognized Time_Period values after mapping: {int(tp_bad.sum())} in {p.name}"
+        )
     if int(dt_bad.sum()) > 0:
         log.setdefault("warnings", []).append(f"Unrecognized Day_Type values: {int(dt_bad.sum())}")
 
