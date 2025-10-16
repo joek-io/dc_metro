@@ -89,7 +89,7 @@ df["Day_Type"] = df["Day_Type"].astype(str).str.upper()
 df["Time_Period"] = df["Time_Period"].astype(str).str.upper()
 df["Entries"] = pd.to_numeric(df["Entries"], errors="coerce").fillna(0)
 
-# Backfill Recovery_Ratio if needed (tolerant)
+# Backfill Recovery_Ratio if needed
 try:
     df = ensure_recovery_ratio(df)
 except Exception as e:
