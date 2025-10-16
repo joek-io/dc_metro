@@ -1,178 +1,192 @@
-import os, json, math
+import os
+import json
+import math
 import numpy as np
 import pandas as pd
+from pathlib import Path
 from scipy.stats import ttest_rel, wilcoxon, shapiro, friedmanchisquare
 import statsmodels.formula.api as smf
 
-IN = "data_clean/station_monthly_recovery.csv"
-OUT_DIR = "results/tables"
-os.makedirs(OUT_DIR, exist_ok=True)
+IN_CSV = Path("data_clean/station_monthly_recovery.csv")
+OUT_DIR = Path("results/tables")
+OUT_DIR.mkdir(parents=True, exist_ok=True)
+OUT_JSON = OUT_DIR / "stats_summary.json"
+OUT_MIXEDLM = OUT_DIR / "mixedlm_summary.txt"
 
-def ensure_recovery_ratio(df: pd.DataFrame) -> pd.DataFrame:
-    """Ensure Recovery_Ratio exists; if missing, compute vs 2019 or sensible fallbacks."""
-    needed = {"Station","Year","Time_Period","Entries"}
-    if not needed.issubset(df.columns):
-        raise AssertionError(f"missing columns for backfill: {needed - set(df.columns)}")
+results = {}
 
-    if "Recovery_Ratio" in df.columns and df["Recovery_Ratio"].notna().any():
-        df["Recovery_Ratio"] = pd.to_numeric(df["Recovery_Ratio"], errors="coerce")
-        return df
+def _ok_cols(df, needed):
+    missing = [c for c in needed if c not in df.columns]
+    return (len(missing) == 0, missing)
 
-    # Primary baseline: 2019 mean by Station×Time_Period
-    base19 = (
-        df[df["Year"] == 2019]
-        .groupby(["Station","Time_Period"], as_index=False)["Entries"]
-        .mean()
-        .rename(columns={"Entries": "Entries_2019"})
-    )
+def _paired_test(weekend, weekday):
+    """
+    Robust paired test: Shapiro on diffs -> paired t if ~normal else Wilcoxon.
+    Returns (test_name, p_value, d_effect or None)
+    """
+    delta = weekend - weekday
+    # Drop NaNs pairwise
+    mask = np.isfinite(weekend) & np.isfinite(weekday)
+    x = weekend[mask]
+    y = weekday[mask]
+    d = (x - y)
+    if len(d) < 3:
+        return ("Insufficient pairs", None, None)
+    try:
+        W, p_norm = shapiro(d)
+    except Exception:
+        # If Shapiro fails (large N, ties), fall back to nonparam
+        p_norm = 0.0
 
-    # Fallback A: mean across ALL years by Station×Time_Period
-    base_any = (
-        df.groupby(["Station","Time_Period"], as_index=False)["Entries"]
-          .mean()
-          .rename(columns={"Entries": "Entries_any"})
-    )
-
-    # Fallback B: period-wide mean (collapses stations)
-    base_period = (
-        df.groupby(["Time_Period"], as_index=False)["Entries"]
-          .mean()
-          .rename(columns={"Entries": "Entries_period"})
-    )
-
-    out = df.merge(base19, on=["Station","Time_Period"], how="left")
-    out = out.merge(base_any, on=["Station","Time_Period"], how="left")
-    out = out.merge(base_period, on=["Time_Period"], how="left")
-
-    # If column missing for any reason, create it
-    if "Entries_2019" not in out.columns:
-        out["Entries_2019"] = np.nan
-
-    # Compose denominator preference: 2019 -> any-year -> period mean
-    denom = out["Entries_2019"]
-    denom = denom.where(~denom.isna(), out["Entries_any"])
-    denom = denom.where(~denom.isna(), out["Entries_period"])
-
-    # Compute ratio with guards
-    bad = denom.isna() | (denom <= 0)
-    out["Recovery_Ratio"] = np.where(bad, np.nan, out["Entries"] / denom)
-
-    return out
-
-def write_results(results: dict):
-    with open(os.path.join(OUT_DIR, "stats_summary.json"), "w") as f:
-        json.dump(results, f, indent=2)
-
-# Load & normalize
-results = {
-    "weekend_vs_weekday": {"p_value": None},
-    "time_of_day": {},
-    "mixedlm": {}
-}
-
-try:
-    df = pd.read_csv(IN)
-except Exception as e:
-    results["error"] = f"failed to read input: {e}"
-    write_results(results)
-    raise
-
-core_needed = {"Station","Year","Time_Period","Day_Type","Entries"}
-missing_core = core_needed - set(df.columns)
-if missing_core:
-    results["error"] = f"missing columns: {missing_core}"
-    write_results(results)
-    raise AssertionError(results["error"])
-
-# Normalize text/numerics
-df["Day_Type"] = df["Day_Type"].astype(str).str.upper()
-df["Time_Period"] = df["Time_Period"].astype(str).str.upper()
-df["Entries"] = pd.to_numeric(df["Entries"], errors="coerce").fillna(0)
-
-# Backfill Recovery_Ratio if needed
-try:
-    df = ensure_recovery_ratio(df)
-except Exception as e:
-    results["error"] = f"recovery backfill failed: {e}"
-    write_results(results)
-    raise
-
-# Restrict to 2023+ for inferential tests
-df_curr = df[df["Year"] >= 2023].copy()
-df_curr["Recovery_Ratio"] = pd.to_numeric(df_curr["Recovery_Ratio"], errors="coerce")
-
-# Weekend vs Weekday
-try:
-    piv = (
-        df_curr.pivot_table(index="Station", columns="Day_Type", values="Recovery_Ratio", aggfunc="mean")
-          .rename(columns={"WEEKEND":"Weekend","WEEKDAY":"Weekday"})
-          .dropna(subset=["Weekend","Weekday"], how="any")
-    )
-    if {"Weekend","Weekday"}.issubset(piv.columns) and len(piv) >= 3:
-        weekend = piv["Weekend"]
-        weekday = piv["Weekday"]
-        delta = weekend - weekday
-        # Normality of differences
-        p_normal = shapiro(delta.dropna()).pvalue if len(delta.dropna()) >= 3 else 0.0
-        if p_normal > 0.05:
-            stat, p_val = ttest_rel(weekend, weekday, nan_policy="omit")
-            test_used = "Paired t-test"
-            sd = np.nanstd(delta, ddof=1)
-            d = (np.nanmean(delta) / sd) if sd > 0 else np.nan
-        else:
-            stat, p_val = wilcoxon(weekend, weekday, zero_method="wilcox", correction=False)
-            test_used = "Wilcoxon signed-rank"
-            d = np.nan
-        results["weekend_vs_weekday"] = {
-            "test": test_used,
-            "stations_n": int(piv.shape[0]),
-            "weekend_mean": float(np.nanmean(weekend)),
-            "weekday_mean": float(np.nanmean(weekday)),
-            "mean_diff": float(np.nanmean(delta)),
-            "p_value": float(p_val),
-            "cohens_d": None if np.isnan(d) else float(d),
-        }
+    if (p_norm is not None) and (p_norm > 0.05):
+        # Paired t
+        stat, p_val = ttest_rel(x, y, nan_policy="omit")
+        denom = np.nanstd(d, ddof=1)
+        d_eff = None if (denom is None or denom == 0 or math.isnan(denom)) else float(np.nanmean(d) / denom)
+        return ("Paired t-test", float(p_val), d_eff)
     else:
-        results["weekend_vs_weekday"] = {"p_value": None, "error": "insufficient paired stations"}
-except Exception as e:
-    results["weekend_vs_weekday"] = {"p_value": None, "error": str(e)}
+        # Wilcoxon
+        try:
+            stat, p_val = wilcoxon(x, y, zero_method="wilcox", correction=False)
+        except Exception:
+            return ("Wilcoxon signed-rank (failed)", None, None)
+        return ("Wilcoxon signed-rank", float(p_val), None)
 
-# Time-of-day (Friedman, Weekday only)
-try:
-    tod = (
-        df_curr[df_curr["Day_Type"] == "WEEKDAY"]
-        .pivot_table(index="Station", columns="Time_Period", values="Recovery_Ratio", aggfunc="mean")
-        .reindex(columns=["AM","MIDDAY","PM","EVENING"])
-        .dropna(how="any")
-    )
-    if tod.shape[0] >= 3 and tod.shape[1] >= 3:
-        stat, p_friedman = friedmanchisquare(*[tod[c] for c in tod.columns])
-        results["time_of_day"] = {
+def _friedman_by_daytype(df, day_type):
+    """
+    Friedman test across time periods within a given Day_Type.
+    Requires each station to have AM/MIDDAY/PM/EVENING means.
+    """
+    sub = df[(df["Day_Type"] == day_type) & df["Time_Period"].isin(["AM", "MIDDAY", "PM", "EVENING"])].copy()
+    if sub.empty:
+        return {"error": f"No rows for {day_type}."}
+    pivot = sub.pivot_table(index="Station", columns="Time_Period", values="Recovery_Ratio", aggfunc="mean")
+    # Keep only stations with all four periods
+    needed = ["AM", "MIDDAY", "PM", "EVENING"]
+    pivot = pivot.dropna(axis=0, how="any")
+    if any(c not in pivot.columns for c in needed):
+        return {"error": f"Missing periods in {day_type} pivot."}
+    pivot = pivot[needed]
+    if pivot.shape[0] < 3:
+        return {"error": f"Insufficient stations for {day_type} Friedman."}
+    try:
+        stat, p_val = friedmanchisquare(*[pivot[c] for c in pivot.columns])
+        return {
             "test": "Friedman",
-            "stations_n": int(tod.shape[0]),
-            "periods": [c for c in tod.columns],
-            "p_value": float(p_friedman),
+            "day_type": day_type,
+            "stations_n": int(pivot.shape[0]),
+            "periods": needed,
+            "p_value": float(p_val),
         }
+    except Exception as e:
+        return {"error": str(e)}
+
+def main():
+    if not IN_CSV.exists():
+        with open(OUT_JSON, "w") as f:
+            json.dump({"error": f"missing file: {str(IN_CSV)}"}, f, indent=2)
+        return
+
+    df = pd.read_csv(IN_CSV)
+    ok, miss = _ok_cols(df, ["Station", "Year", "Time_Period", "Day_Type", "Recovery_Ratio", "Entries_2019", "Denom_Flag"])
+    if not ok:
+        with open(OUT_JSON, "w") as f:
+            json.dump({"error": f"missing columns: {set(miss)}"}, f, indent=2)
+        return
+
+    # Normalize Day_Type casing (defensive)
+    df["Day_Type"] = df["Day_Type"].astype(str).str.upper().str.strip()
+    df["Time_Period"] = df["Time_Period"].astype(str).str.upper().str.strip()
+    # Keep only valid time periods
+    df = df[df["Time_Period"].isin(["AM", "MIDDAY", "PM", "EVENING"])].copy()
+
+    # Core analysis subset: post-2019 data with finite ratios
+    df_curr = df[(df["Year"] >= 2023) & np.isfinite(df["Recovery_Ratio"])].copy()
+
+    # Sensitivity subset: exclude weak baselines (Denom_Flag True or NaN Entries_2019)
+    df_curr_strong = df_curr[~df_curr["Denom_Flag"] & np.isfinite(df_curr["Entries_2019"])].copy()
+
+    results_local = {}
+
+    # 1) Weekend vs Weekday (station-level means)
+    for label, frame in [("all", df_curr), ("strong_baseline", df_curr_strong)]:
+        try:
+            pivot = frame.pivot_table(index="Station", columns="Day_Type", values="Recovery_Ratio", aggfunc="mean")
+            # Normalize expected columns
+            col_map = {c: c.upper() for c in pivot.columns}
+            pivot.rename(columns=col_map, inplace=True)
+            if {"WEEKEND", "WEEKDAY"}.issubset(set(pivot.columns)):
+                weekend = pivot["WEEKEND"]
+                weekday = pivot["WEEKDAY"]
+                test_used, p_val, d_eff = _paired_test(weekend, weekday)
+                results_local[f"weekend_vs_weekday__{label}"] = {
+                    "test": test_used,
+                    "stations_n": int(pivot.dropna().shape[0]),
+                    "weekend_mean": float(np.nanmean(weekend)),
+                    "weekday_mean": float(np.nanmean(weekday)),
+                    "mean_diff": float(np.nanmean(weekend - weekday)),
+                    "p_value": None if p_val is None else float(p_val),
+                    "cohens_d": None if d_eff is None else float(d_eff),
+                }
+            else:
+                results_local[f"weekend_vs_weekday__{label}"] = {"error": "Weekend/Weekday columns missing after pivot."}
+        except Exception as e:
+            results_local[f"weekend_vs_weekday__{label}"] = {"error": str(e)}
+
+    # 2) Time-of-day differences (weekday and weekend separately)
+    results_local["time_of_day_weekday"] = _friedman_by_daytype(df_curr, "WEEKDAY")
+    results_local["time_of_day_weekend"] = _friedman_by_daytype(df_curr, "WEEKEND")
+
+    # 3) Mixed-effects model on log ratio, with Year centered and interaction
+    #    Use strong-baseline subset to avoid extreme ratios from weak denominators.
+    dfm = df_curr_strong.copy()
+    dfm = dfm[np.isfinite(dfm["Recovery_Ratio"]) & (dfm["Recovery_Ratio"] > 0)].copy()
+    if len(dfm) >= 50 and dfm["Station"].nunique() >= 5:
+        dfm["Log_Ratio"] = np.log(dfm["Recovery_Ratio"])
+        dfm["Year_centered"] = dfm["Year"] - 2019
+        dfm["Day_Type"] = dfm["Day_Type"].astype("category")
+        dfm["Time_Period"] = dfm["Time_Period"].astype("category")
+
+        # Primary model: Day_Type * Time_Period + Year_centered, random intercept for Station
+        try:
+            model = smf.mixedlm("Log_Ratio ~ Day_Type * Time_Period + Year_centered",
+                                dfm, groups=dfm["Station"], missing="drop")
+            fit = model.fit()
+            with open(OUT_MIXEDLM, "w") as f:
+                f.write(str(fit.summary()))
+            results_local["mixedlm"] = {
+                "converged": bool(getattr(fit, "converged", False)),
+                "n_obs": int(fit.nobs),
+                "aic": float(getattr(fit, "aic", np.nan)),
+                "bic": float(getattr(fit, "bic", np.nan)),
+            }
+        except Exception as e:
+            # Fallback to additive (no interaction)
+            try:
+                model = smf.mixedlm("Log_Ratio ~ Day_Type + Time_Period + Year_centered",
+                                    dfm, groups=dfm["Station"], missing="drop")
+                fit = model.fit()
+                with open(OUT_MIXEDLM, "w") as f:
+                    f.write("Fallback (no interaction)\n")
+                    f.write(str(fit.summary()))
+                results_local["mixedlm"] = {
+                    "converged": bool(getattr(fit, "converged", False)),
+                    "n_obs": int(fit.nobs),
+                    "aic": float(getattr(fit, "aic", np.nan)),
+                    "bic": float(getattr(fit, "bic", np.nan)),
+                    "fallback": True,
+                    "error_primary": str(e),
+                }
+            except Exception as e2:
+                results_local["mixedlm"] = {"error": f"both primary and fallback failed: {e}; {e2}"}
     else:
-        results["time_of_day"] = {"error": "insufficient stations/periods for Friedman"}
-except Exception as e:
-    results["time_of_day"] = {"error": str(e)}
+        results_local["mixedlm"] = {"error": "insufficient rows or stations for mixed model."}
 
-# Mixed-effects model
-try:
-    dfm = df_curr.copy()
-    dfm["Log_Ratio"] = np.where(dfm["Recovery_Ratio"] > 0, np.log(dfm["Recovery_Ratio"]), np.nan)
-    dfm["Day_Type"] = dfm["Day_Type"].astype("category")
-    dfm["Time_Period"] = dfm["Time_Period"].astype("category")
-    import warnings
-    warnings.filterwarnings("ignore")
-    model = smf.mixedlm("Log_Ratio ~ Day_Type + Time_Period + Year", dfm, groups=dfm["Station"], missing="drop")
-    fit = model.fit()
-    with open(os.path.join(OUT_DIR, "mixedlm_summary.txt"), "w") as f:
-        f.write(str(fit.summary()))
-    results["mixedlm"] = {"converged": bool(getattr(fit, "converged", True)), "n_obs": int(getattr(fit, "nobs", len(dfm.dropna(subset=['Log_Ratio']))))}
-except Exception as e:
-    results["mixedlm"] = {"error": str(e)}
+    # Write JSON
+    with open(OUT_JSON, "w") as f:
+        json.dump(results_local, f, indent=2)
 
-write_results(results)
-print("Inference complete. Wrote results/tables/stats_summary.json")
+    print("Inference complete. Wrote:", OUT_JSON)
+
+if __name__ == "__main__":
+    main()
