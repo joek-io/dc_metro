@@ -72,24 +72,24 @@ jobs:
 
           # Minimal GeoJSON for DC stations (NAME attribute expected by script)
           cat > data_geo/metro_stations.geojson << 'EOF'
-{
-  "type": "FeatureCollection",
-  "name": "metro_stations",
-  "crs": { "type": "name", "properties": { "name": "EPSG:4326" } },
-  "features": [
-    {
-      "type": "Feature",
-      "properties": { "NAME": "GALLERY PL-CHINATOWN" },
-      "geometry": { "type": "Point", "coordinates": [ -77.0219, 38.8983 ] }
-    },
-    {
-      "type": "Feature",
-      "properties": { "NAME": "UNION STATION" },
-      "geometry": { "type": "Point", "coordinates": [ -77.0075, 38.8971 ] }
-    }
-  ]
-}
-EOF
+          {
+            "type": "FeatureCollection",
+            "name": "metro_stations",
+            "crs": { "type": "name", "properties": { "name": "EPSG:4326" } },
+            "features": [
+              {
+                "type": "Feature",
+                "properties": { "NAME": "GALLERY PL-CHINATOWN" },
+                "geometry": { "type": "Point", "coordinates": [ -77.0219, 38.8983 ] }
+              },
+              {
+                "type": "Feature",
+                "properties": { "NAME": "UNION STATION" },
+                "geometry": { "type": "Point", "coordinates": [ -77.0075, 38.8971 ] }
+              }
+            ]
+          }
+          EOF
 
       - name: Run 01_clean_data.py
         run: |
@@ -100,11 +100,11 @@ EOF
           ls -lah data_clean || true
           ls -lah results/tables || true
           python - << 'PY'
-import json, sys
-from pathlib import Path
-p = Path("results/tables/clean_log.json")
-print(p.read_text() if p.exists() else "clean_log.json not found")
-PY
+          import json
+          from pathlib import Path
+          p = Path("results/tables/clean_log.json")
+          print(p.read_text() if p.exists() else "clean_log.json not found")
+          PY
 
       - name: Run 02_inference_tests.py
         run: |
@@ -113,11 +113,11 @@ PY
       - name: Show inference outputs
         run: |
           python - << 'PY'
-import json, sys
-from pathlib import Path
-p = Path("results/tables/stats_summary.json")
-print(p.read_text() if p.exists() else "stats_summary.json not found")
-PY
+          import json
+          from pathlib import Path
+          p = Path("results/tables/stats_summary.json")
+          print(p.read_text() if p.exists() else "stats_summary.json not found")
+          PY
 
       - name: Run 03_tableau_export.py
         run: |
