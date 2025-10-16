@@ -50,7 +50,7 @@ if {"Weekend","Weekday"}.issubset(pivot.columns):
 else:
     results["weekend_vs_weekday"] = {"error": "Missing Weekend/Weekday columns after pivot."}
 
-# Time-of-day differences (Weekday only), Friedman nonparametric (robust default)
+# Time-of-day differences (Weekday only), Friedman nonparametric
 tod = (df_curr[df_curr["Day_Type"]=="Weekday"]
        .pivot_table(index="Station", columns="Time_Period", values="Recovery_Ratio", aggfunc="mean")
        .dropna(axis=0, how="any"))
