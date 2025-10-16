@@ -249,7 +249,7 @@ def main():
 
     base_raw = df[df["Year"] == 2019].groupby(["Station", "Time_Period"])["Entries"]
     base = base_raw.agg(Entries_2019="mean", n_2019="count").reset_index()
-    base.loc[base["n_2019"] < 10, "Entries_2019"] = np.nan
+    base.loc[base["n_2019"] < 1, "Entries_2019"] = np.nan
     base = base.drop(columns=["n_2019"])
 
     merged = df.merge(base, on=["Station", "Time_Period"], how="left")
