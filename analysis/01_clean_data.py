@@ -44,7 +44,7 @@ def standardize_columns(df):
     return df
 
 def load_single_csv(path, default_year=None):
-    df = pd.read_csv(path)
+    df = pd.read_csv(path, encoding="utf-16le", sep="\t", engine="python")
     df = standardize_columns(df)
 
     # Get Year/Month from Date if not found
