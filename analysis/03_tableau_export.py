@@ -12,20 +12,24 @@ os.makedirs("data_clean", exist_ok=True)
 df = pd.read_csv(IN)
 g = gpd.read_file(STATIONS)
 
-# Normalize join keys
-df["Station"] = df["Station"].str.upper().str.strip()
-name_col = "NAME" if "NAME" in g.columns else g.columns[0]
+df["Station"] = df["Station"].astype(str).str.upper().str.strip()
+
+# Choose a likely name column
+name_candidates = [c for c in ["NAME","STATION","STATION_NAME","NAME_LONG","NAME1"] if c in g.columns]
+if not name_candidates:
+    name_candidates = [c for c in g.columns if c != "geometry"]
+name_col = name_candidates[0]
+
 g[name_col] = g[name_col].astype(str).str.upper().str.strip()
 
-# Get coordinates from geometry
+g = g.to_crs(4326)
 g["Longitude"] = g.geometry.centroid.x
 g["Latitude"] = g.geometry.centroid.y
 
-# Reduce geometry columns
 g_small = g[[name_col, "Longitude", "Latitude"]].drop_duplicates()
 g_small.columns = ["Station", "Longitude", "Latitude"]
 
 out = df.merge(g_small, on="Station", how="left")
 
 out.to_csv(OUT, index=False)
-print(f"✅ Tableau feed saved to {OUT} with {len(out):,} rows.")
+print(f"Saved {OUT} with {len(out):,} rows.")
