@@ -1,4 +1,4 @@
-import os, json
+import os, json, math
 import numpy as np
 import pandas as pd
 from scipy.stats import ttest_rel, wilcoxon, shapiro, friedmanchisquare
@@ -9,35 +9,61 @@ OUT_DIR = "results/tables"
 os.makedirs(OUT_DIR, exist_ok=True)
 
 def ensure_recovery_ratio(df: pd.DataFrame) -> pd.DataFrame:
-    """Ensure Recovery_Ratio exists; if missing, compute it vs 2019 baseline."""
-    # Minimal columns required for backfill
+    """Ensure Recovery_Ratio exists; if missing, compute vs 2019 or sensible fallbacks."""
     needed = {"Station","Year","Time_Period","Entries"}
     if not needed.issubset(df.columns):
         raise AssertionError(f"missing columns for backfill: {needed - set(df.columns)}")
 
     if "Recovery_Ratio" in df.columns and df["Recovery_Ratio"].notna().any():
-        # Column already present with values: standardize dtype and return
         df["Recovery_Ratio"] = pd.to_numeric(df["Recovery_Ratio"], errors="coerce")
         return df
 
-    # Build 2019 baseline by Station × Time_Period (mean of Entries in 2019)
-    base = (
+    # Primary baseline: 2019 mean by Station×Time_Period
+    base19 = (
         df[df["Year"] == 2019]
         .groupby(["Station","Time_Period"], as_index=False)["Entries"]
         .mean()
         .rename(columns={"Entries": "Entries_2019"})
     )
 
-    # Merge baseline
-    out = df.merge(base, on=["Station","Time_Period"], how="left")
-    out["Entries_2019"] = pd.to_numeric(out["Entries_2019"], errors="coerce")
+    # Fallback A: mean across ALL years by Station×Time_Period
+    base_any = (
+        df.groupby(["Station","Time_Period"], as_index=False)["Entries"]
+          .mean()
+          .rename(columns={"Entries": "Entries_any"})
+    )
 
-    # Compute ratio; guard denom
-    denom_bad = out["Entries_2019"].isna() | (out["Entries_2019"] == 0)
-    out["Recovery_Ratio"] = np.where(denom_bad, np.nan, out["Entries"] / out["Entries_2019"])
+    # Fallback B: period-wide mean (collapses stations)
+    base_period = (
+        df.groupby(["Time_Period"], as_index=False)["Entries"]
+          .mean()
+          .rename(columns={"Entries": "Entries_period"})
+    )
+
+    out = df.merge(base19, on=["Station","Time_Period"], how="left")
+    out = out.merge(base_any, on=["Station","Time_Period"], how="left")
+    out = out.merge(base_period, on=["Time_Period"], how="left")
+
+    # If column missing for any reason, create it
+    if "Entries_2019" not in out.columns:
+        out["Entries_2019"] = np.nan
+
+    # Compose denominator preference: 2019 -> any-year -> period mean
+    denom = out["Entries_2019"]
+    denom = denom.where(~denom.isna(), out["Entries_any"])
+    denom = denom.where(~denom.isna(), out["Entries_period"])
+
+    # Compute ratio with guards
+    bad = denom.isna() | (denom <= 0)
+    out["Recovery_Ratio"] = np.where(bad, np.nan, out["Entries"] / denom)
+
     return out
 
-# Load data
+def write_results(results: dict):
+    with open(os.path.join(OUT_DIR, "stats_summary.json"), "w") as f:
+        json.dump(results, f, indent=2)
+
+# Load & normalize
 results = {
     "weekend_vs_weekday": {"p_value": None},
     "time_of_day": {},
@@ -48,38 +74,34 @@ try:
     df = pd.read_csv(IN)
 except Exception as e:
     results["error"] = f"failed to read input: {e}"
-    with open(os.path.join(OUT_DIR, "stats_summary.json"), "w") as f:
-        json.dump(results, f, indent=2)
+    write_results(results)
     raise
 
-# Core schema check (but we can backfill Recovery_Ratio)
 core_needed = {"Station","Year","Time_Period","Day_Type","Entries"}
 missing_core = core_needed - set(df.columns)
 if missing_core:
     results["error"] = f"missing columns: {missing_core}"
-    with open(os.path.join(OUT_DIR, "stats_summary.json"), "w") as f:
-        json.dump(results, f, indent=2)
+    write_results(results)
     raise AssertionError(results["error"])
 
-# Normalize
+# Normalize text/numerics
 df["Day_Type"] = df["Day_Type"].astype(str).str.upper()
 df["Time_Period"] = df["Time_Period"].astype(str).str.upper()
 df["Entries"] = pd.to_numeric(df["Entries"], errors="coerce").fillna(0)
 
-# Backfill Recovery_Ratio if needed
+# Backfill Recovery_Ratio if needed (tolerant)
 try:
     df = ensure_recovery_ratio(df)
 except Exception as e:
     results["error"] = f"recovery backfill failed: {e}"
-    with open(os.path.join(OUT_DIR, "stats_summary.json"), "w") as f:
-        json.dump(results, f, indent=2)
+    write_results(results)
     raise
 
-# Restrict to current years for tests
+# Restrict to 2023+ for inferential tests
 df_curr = df[df["Year"] >= 2023].copy()
 df_curr["Recovery_Ratio"] = pd.to_numeric(df_curr["Recovery_Ratio"], errors="coerce")
 
-# Weekend vs Weekday (paired) 
+# Weekend vs Weekday
 try:
     piv = (
         df_curr.pivot_table(index="Station", columns="Day_Type", values="Recovery_Ratio", aggfunc="mean")
@@ -115,7 +137,7 @@ try:
 except Exception as e:
     results["weekend_vs_weekday"] = {"p_value": None, "error": str(e)}
 
-# Time-of-day (Friedman on Weekday)
+# Time-of-day (Friedman, Weekday only)
 try:
     tod = (
         df_curr[df_curr["Day_Type"] == "WEEKDAY"]
@@ -124,7 +146,7 @@ try:
         .dropna(how="any")
     )
     if tod.shape[0] >= 3 and tod.shape[1] >= 3:
-        stat, p_friedman = friedmanchisquare(*[tod[c] for c in tod.columns if c in tod.columns])
+        stat, p_friedman = friedmanchisquare(*[tod[c] for c in tod.columns])
         results["time_of_day"] = {
             "test": "Friedman",
             "stations_n": int(tod.shape[0]),
@@ -148,11 +170,9 @@ try:
     fit = model.fit()
     with open(os.path.join(OUT_DIR, "mixedlm_summary.txt"), "w") as f:
         f.write(str(fit.summary()))
-    results["mixedlm"] = {"converged": bool(getattr(fit, "converged", True)), "n_obs": int(fit.nobs)}
+    results["mixedlm"] = {"converged": bool(getattr(fit, "converged", True)), "n_obs": int(getattr(fit, "nobs", len(dfm.dropna(subset=['Log_Ratio']))))}
 except Exception as e:
     results["mixedlm"] = {"error": str(e)}
 
-with open(os.path.join(OUT_DIR, "stats_summary.json"), "w") as f:
-    json.dump(results, f, indent=2)
-
+write_results(results)
 print("Inference complete. Wrote results/tables/stats_summary.json")
