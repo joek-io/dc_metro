@@ -8,13 +8,42 @@ IN = "data_clean/station_monthly_recovery.csv"
 OUT_DIR = "results/tables"
 os.makedirs(OUT_DIR, exist_ok=True)
 
+def ensure_recovery_ratio(df: pd.DataFrame) -> pd.DataFrame:
+    """Ensure Recovery_Ratio exists; if missing, compute it vs 2019 baseline."""
+    # Minimal columns required for backfill
+    needed = {"Station","Year","Time_Period","Entries"}
+    if not needed.issubset(df.columns):
+        raise AssertionError(f"missing columns for backfill: {needed - set(df.columns)}")
+
+    if "Recovery_Ratio" in df.columns and df["Recovery_Ratio"].notna().any():
+        # Column already present with values: standardize dtype and return
+        df["Recovery_Ratio"] = pd.to_numeric(df["Recovery_Ratio"], errors="coerce")
+        return df
+
+    # Build 2019 baseline by Station × Time_Period (mean of Entries in 2019)
+    base = (
+        df[df["Year"] == 2019]
+        .groupby(["Station","Time_Period"], as_index=False)["Entries"]
+        .mean()
+        .rename(columns={"Entries": "Entries_2019"})
+    )
+
+    # Merge baseline
+    out = df.merge(base, on=["Station","Time_Period"], how="left")
+    out["Entries_2019"] = pd.to_numeric(out["Entries_2019"], errors="coerce")
+
+    # Compute ratio; guard denom
+    denom_bad = out["Entries_2019"].isna() | (out["Entries_2019"] == 0)
+    out["Recovery_Ratio"] = np.where(denom_bad, np.nan, out["Entries"] / out["Entries_2019"])
+    return out
+
+# Load data
 results = {
     "weekend_vs_weekday": {"p_value": None},
     "time_of_day": {},
     "mixedlm": {}
 }
 
-# Load data safely
 try:
     df = pd.read_csv(IN)
 except Exception as e:
@@ -23,25 +52,37 @@ except Exception as e:
         json.dump(results, f, indent=2)
     raise
 
-# Basic column check
-needed = {"Station","Year","Day_Type","Time_Period","Recovery_Ratio"}
-missing = needed - set(df.columns)
-if missing:
-    results["error"] = f"missing columns: {missing}"
+# Core schema check (but we can backfill Recovery_Ratio)
+core_needed = {"Station","Year","Time_Period","Day_Type","Entries"}
+missing_core = core_needed - set(df.columns)
+if missing_core:
+    results["error"] = f"missing columns: {missing_core}"
     with open(os.path.join(OUT_DIR, "stats_summary.json"), "w") as f:
         json.dump(results, f, indent=2)
-    # still raise so CI can surface schema problems
-    raise AssertionError(f"Missing columns: {missing}")
+    raise AssertionError(results["error"])
 
 # Normalize
 df["Day_Type"] = df["Day_Type"].astype(str).str.upper()
-df = df[df["Year"] >= 2023].copy()
-df["Recovery_Ratio"] = pd.to_numeric(df["Recovery_Ratio"], errors="coerce")
+df["Time_Period"] = df["Time_Period"].astype(str).str.upper()
+df["Entries"] = pd.to_numeric(df["Entries"], errors="coerce").fillna(0)
 
-# Weekend vs Weekday (paired by Station)
+# Backfill Recovery_Ratio if needed
+try:
+    df = ensure_recovery_ratio(df)
+except Exception as e:
+    results["error"] = f"recovery backfill failed: {e}"
+    with open(os.path.join(OUT_DIR, "stats_summary.json"), "w") as f:
+        json.dump(results, f, indent=2)
+    raise
+
+# Restrict to current years for tests
+df_curr = df[df["Year"] >= 2023].copy()
+df_curr["Recovery_Ratio"] = pd.to_numeric(df_curr["Recovery_Ratio"], errors="coerce")
+
+# Weekend vs Weekday (paired) 
 try:
     piv = (
-        df.pivot_table(index="Station", columns="Day_Type", values="Recovery_Ratio", aggfunc="mean")
+        df_curr.pivot_table(index="Station", columns="Day_Type", values="Recovery_Ratio", aggfunc="mean")
           .rename(columns={"WEEKEND":"Weekend","WEEKDAY":"Weekday"})
           .dropna(subset=["Weekend","Weekday"], how="any")
     )
@@ -70,15 +111,14 @@ try:
             "cohens_d": None if np.isnan(d) else float(d),
         }
     else:
-        # leave p_value=None to satisfy CI step tolerance
-        results["weekend_vs_weekday"].update({"error":"insufficient paired stations"})
+        results["weekend_vs_weekday"] = {"p_value": None, "error": "insufficient paired stations"}
 except Exception as e:
-    results["weekend_vs_weekday"].update({"error": str(e)})
+    results["weekend_vs_weekday"] = {"p_value": None, "error": str(e)}
 
-# Time-of-day differences on WEEKDAY (Friedman)
+# Time-of-day (Friedman on Weekday)
 try:
     tod = (
-        df[df["Day_Type"]=="WEEKDAY"]
+        df_curr[df_curr["Day_Type"] == "WEEKDAY"]
         .pivot_table(index="Station", columns="Time_Period", values="Recovery_Ratio", aggfunc="mean")
         .reindex(columns=["AM","MIDDAY","PM","EVENING"])
         .dropna(how="any")
@@ -96,9 +136,9 @@ try:
 except Exception as e:
     results["time_of_day"] = {"error": str(e)}
 
-# Mixed-effects model (log ratio)
+# Mixed-effects model
 try:
-    dfm = df.copy()
+    dfm = df_curr.copy()
     dfm["Log_Ratio"] = np.where(dfm["Recovery_Ratio"] > 0, np.log(dfm["Recovery_Ratio"]), np.nan)
     dfm["Day_Type"] = dfm["Day_Type"].astype("category")
     dfm["Time_Period"] = dfm["Time_Period"].astype("category")
@@ -112,7 +152,6 @@ try:
 except Exception as e:
     results["mixedlm"] = {"error": str(e)}
 
-# Always write JSON
 with open(os.path.join(OUT_DIR, "stats_summary.json"), "w") as f:
     json.dump(results, f, indent=2)
 
