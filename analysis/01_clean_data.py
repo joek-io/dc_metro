@@ -3,64 +3,51 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-# Folder paths
+# Paths
 RAW_DIR = Path("data_raw")
 OUT_DIR = Path("data_clean")
 LOG_DIR = Path("results/tables")
 
-# Output files
+# Outputs
 OUT_CSV = OUT_DIR / "station_monthly_recovery.csv"
 LOG_JSON = LOG_DIR / "clean_log.json"
 
-# Years to process
+# Years
 YEARS = [2019, 2023, 2024, 2025]
 
-# FILE READING HELPERS
+# File reading
 
 def _looks_utf16(p: Path) -> bool:
-    """Return True if file likely UTF-16LE (BOM or NULs in first bytes)."""
     with open(p, "rb") as fb:
         head = fb.read(4)
     return head.startswith(b"\xff\xfe") or b"\x00" in head
 
 def _sniff_sep(sample: str) -> str:
-    """Choose a delimiter from sample text, preferring tab if present."""
-    tabs = sample.count("\t")
-    commas = sample.count(",")
-    semis = sample.count(";")
-    if tabs >= max(commas, semis):
-        return "\t"
-    if semis > commas:
-        return ";"
-    return ","  # default
+    tabs, commas, semis = sample.count("\t"), sample.count(","), sample.count(";")
+    if tabs >= max(commas, semis): return "\t"
+    if semis > commas: return ";"
+    return ","
 
 def _clean_headers(df: pd.DataFrame) -> pd.DataFrame:
-    """Strip BOMs, trim, and collapse spaces in column names."""
     def _fix(c):
-        c = str(c).replace("\ufeff", "")  # BOM
+        c = str(c).replace("\ufeff", "")
         c = re.sub(r"\s+", " ", c).strip()
         return c
     df.columns = [_fix(c) for c in df.columns]
     return df
 
 def read_table(p: Path) -> pd.DataFrame:
-    """Read CSV/Excel and sniff encoding + delimiter per file."""
-    # Excel
     if p.suffix.lower() in {".xlsx", ".xls"}:
         try:
             return pd.read_excel(p, engine="openpyxl")
         except Exception:
             return pd.read_excel(p)
-
-    # UTF-16LE CSV
     if _looks_utf16(p):
         with open(p, "r", encoding="utf-16le", errors="replace", newline="") as f:
             sample = "".join([f.readline() for _ in range(25)])
         sep = _sniff_sep(sample)
         df = pd.read_csv(p, encoding="utf-16le", sep=sep, engine="python")
         return _clean_headers(df)
-
-    # UTF-8 CSV
     import csv
     with open(p, "r", encoding="utf-8", errors="replace", newline="") as f:
         sample = "".join([f.readline() for _ in range(25)])
@@ -71,127 +58,76 @@ def read_table(p: Path) -> pd.DataFrame:
     df = pd.read_csv(p, encoding="utf-8", sep=sep, engine="python")
     return _clean_headers(df)
 
-# DATA CLEANING HELPERS
+# Cleaning helpers
 
 def normalize_station(x: str) -> str:
-    """Clean and standardize station names for consistent matching."""
-    if pd.isna(x):
-        return "UNKNOWN"
+    if pd.isna(x): return "UNKNOWN"
     s = str(x).upper().strip()
-    s = re.sub(r"[.]", "", s)          # remove periods
-    s = re.sub(r"[–—]+", "-", s)       # replace long dashes with hyphen
-    s = re.sub(r"\s+", " ", s).strip() # collapse spaces
+    s = re.sub(r"[.]", "", s)
+    s = re.sub(r"[–—]+", "-", s)
+    s = re.sub(r"\s+", " ", s).strip()
     return s or "UNKNOWN"
 
-# Acceptable final time-period buckets
 VALID_TIME_PERIODS = {"AM", "MIDDAY", "PM", "EVENING"}
 VALID_DAY_TYPES = {"WEEKDAY", "WEEKEND"}
 
 def normalize_time_period(x: str):
-    """
-    Map many WMATA variants and explicit time ranges into {AM, MIDDAY, PM, EVENING}.
-    Handles:
-      - 'AM Peak', 'Midday', 'PM Peak', 'Evening'
-      - Prefixes like 'Weekday - AM Peak'
-      - Ranges like '4:00 AM - 9:59 AM', '10:00 AM - 2:59 PM', etc.
-    Unknowns -> np.nan.
-    """
     if x is None or (isinstance(x, float) and pd.isna(x)):
         return np.nan
-
-    t = str(x)
-    t = t.replace("\u00A0", " ")               # non-breaking space
-    t = re.sub(r"[–—]+", "-", t)               # long dash -> hyphen
-    t = re.sub(r"\s+", " ", t).strip().upper() # collapse spaces
-
-    # Remove leading day-type prefixes like 'WEEKDAY - ' or 'SATURDAY - '
+    t = str(x).replace("\u00A0", " ")
+    t = re.sub(r"[–—]+", "-", t)
+    t = re.sub(r"\s+", " ", t).strip().upper()
     t = re.sub(r'^(WEEKDAY|SATURDAY|SUNDAY|WEEKEND|HOLIDAY)\s*-\s*', '', t)
-
-    # Exact matches
-    if t in {"AM", "AM PEAK"}:
-        return "AM"
-    if t in {"MIDDAY", "MID DAY", "MID-DAY"}:
-        return "MIDDAY"
-    if t in {"PM", "PM PEAK"}:
-        return "PM"
-    if t in {"EVENING", "EVE", "LATE EVENING", "NIGHT"}:
-        return "EVENING"
-
-    # Time range pattern: 'H:MM AM - H:MM PM'
+    if t in {"AM", "AM PEAK"}: return "AM"
+    if t in {"MIDDAY", "MID DAY", "MID-DAY"}: return "MIDDAY"
+    if t in {"PM", "PM PEAK"}: return "PM"
+    if t in {"EVENING", "EVE", "LATE EVENING", "NIGHT"}: return "EVENING"
     m = re.search(r'(\d{1,2}):\d{2}\s*(AM|PM)\s*-\s*(\d{1,2}):\d{2}\s*(AM|PM)', t)
     if m:
-        sh, sap = int(m.group(1)), m.group(2)  # start hour and AM/PM
-        # Convert start hour to 24h
-        if sap == "AM":
-            start_24 = 0 if sh == 12 else sh
-        else:
-            start_24 = 12 if sh == 12 else sh + 12
-
-        # Bucket by start time
-        # AM   : 05:00–09:59
-        # MID  : 10:00–14:59
-        # PM   : 15:00–18:59
-        # EVE  : 19:00–23:59 and 00:00–04:59
-        if   5 <= start_24 <= 9:   return "AM"
-        elif 10 <= start_24 <= 14: return "MIDDAY"
-        elif 15 <= start_24 <= 18: return "PM"
-        else:                      return "EVENING"
-
-    # Keyword rules
-    if "EARLY AM" in t or ("AM" in t and "PEAK" in t):
-        return "AM"
-    if "MID" in t:
-        return "MIDDAY"
-    if "PM" in t and "PEAK" in t:
-        return "PM"
-    if any(k in t for k in ["EVEN", "NIGHT", "LATE"]):
-        return "EVENING"
-
-    # Non-analytical labels -> drop
-    if any(k in t for k in ["ALL DAY", "OFF-PEAK", "OFF PEAK", "WEEKEND", "HOLIDAY"]):
-        return np.nan
-
+        sh, sap = int(m.group(1)), m.group(2)
+        start_24 = (0 if sh == 12 else sh) if sap == "AM" else (12 if sh == 12 else sh + 12)
+        if   5 <= start_24 <= 9:  return "AM"
+        elif 10 <= start_24 <= 14:return "MIDDAY"
+        elif 15 <= start_24 <= 18:return "PM"
+        else:                     return "EVENING"
+    if "EARLY AM" in t or ("AM" in t and "PEAK" in t): return "AM"
+    if "MID" in t: return "MIDDAY"
+    if "PM" in t and "PEAK" in t: return "PM"
+    if any(k in t for k in ["EVEN", "NIGHT", "LATE"]): return "EVENING"
+    if any(k in t for k in ["ALL DAY", "OFF-PEAK", "OFF PEAK", "WEEKEND", "HOLIDAY"]): return np.nan
     return np.nan
 
 def derive_day_type(service_type: str, day_of_week: str) -> str:
-    """Use 'Service Type' or 'Day of Week' to classify as WEEKDAY or WEEKEND."""
+    # WEEKDAY/WEEKEND derivation
     if isinstance(service_type, str) and service_type.strip():
-        st = service_type.strip().upper()
-        if st == "WEEKDAY": return "WEEKDAY"
+        st = service_type.strip().upper().replace("\u00A0", " ")
+        st = re.sub(r"\s+", " ", st)
+        if st in {"WEEKDAY", "WEEKDAYS", "ALL WEEKDAYS"}: return "WEEKDAY"
+        if st in {"WEEKEND", "WEEKENDS"}: return "WEEKEND"
         if st in {"SATURDAY", "SUNDAY"}: return "WEEKEND"
-        if st == "HOLIDAY": return "WEEKDAY"  # adjust if you prefer holidays as WEEKEND
+        if "WEEKDAY" in st and "WEEKEND" not in st: return "WEEKDAY"
+        if "WEEKEND" in st: return "WEEKEND"
+        if "HOLIDAY" in st: return "WEEKDAY"
     if isinstance(day_of_week, str) and day_of_week.strip():
-        d = day_of_week.strip().upper()
-        return "WEEKEND" if d in {"SATURDAY", "SUNDAY"} else "WEEKDAY"
+        d = day_of_week.strip().upper().replace("\u00A0", " ")
+        d = re.sub(r"\s+", " ", d)
+        if d in {"MONDAY","TUESDAY","WEDNESDAY","THURSDAY","FRIDAY"}: return "WEEKDAY"
+        if d in {"SATURDAY","SUNDAY"}: return "WEEKEND"
+        if "SAT" in d or "SUN" in d: return "WEEKEND"
+        if any(w in d for w in ["MON","TUE","WED","THU","FRI"]): return "WEEKDAY"
     return np.nan
 
 def _parse_date_series(s: pd.Series) -> pd.Series:
-    """
-    Parse WMATA 'Date' with explicit format when we can, fallback otherwise.
-    Handles:
-      - 'YYYY-MM-DD'  -> %Y-%m-%d
-      - 'MM/DD/YYYY'  -> %m/%d/%Y
-      - Excel serials -> origin='1899-12-30'
-    Returns datetime64[ns].
-    """
-    # Numeric → Excel serials
     if pd.api.types.is_numeric_dtype(s):
         return pd.to_datetime(s, origin="1899-12-30", unit="D", errors="coerce")
-
-    # Probe first few non-null values
-    probe = next((str(v) for v in s.dropna().head(50).tolist() if str(v).strip()), "")
-    probe = probe.strip()
-
+    probe = next((str(v) for v in s.dropna().head(50).tolist() if str(v).strip()), "").strip()
     if re.match(r"^\d{4}-\d{2}-\d{2}$", probe):
         return pd.to_datetime(s, format="%Y-%m-%d", errors="coerce")
-
     if re.match(r"^\d{1,2}/\d{1,2}/\d{4}$", probe):
         return pd.to_datetime(s, format="%m/%d/%Y", errors="coerce")
-
-    # Fallback, quiet
     return pd.to_datetime(s, errors="coerce")
 
-# COLUMN NAMES EXPECTED
+# Expected columns
 
 EXPECTED_COLS = [
     "Year of Date", "Date", "Day of Week", "Holiday", "Service Type",
@@ -200,29 +136,23 @@ EXPECTED_COLS = [
     "Tap Entries"
 ]
 
-# LOAD WMATA TABLEAU FILE
+# Load file
 
 def load_wmata_tableau(p: Path, default_year: int, log: dict) -> pd.DataFrame:
-    """Load and clean a single WMATA CSV exported from the Ridership Portal."""
     df = read_table(p)
     log.setdefault("files_read", []).append({"path": str(p), "rows": int(len(df)), "cols": df.columns.tolist()})
-
-    # Ensure all expected columns exist
     for c in EXPECTED_COLS:
         if c not in df.columns:
             df[c] = np.nan
 
-    # Create Year and Month with robust date parsing
     df["Year"] = pd.to_numeric(df["Year of Date"], errors="coerce").astype("Int64")
     date_parsed = _parse_date_series(df["Date"])
     df["Year"] = df["Year"].fillna(date_parsed.dt.year).fillna(default_year).astype("Int64")
     df["Month"] = date_parsed.dt.month.astype("Int64")
 
-    # Clean station names
     df["Station"] = df["Station Name"].map(normalize_station)
-
-    # Map time periods and log distinct raw vs. mapped values
     df["Time_Period"] = df["Time Period"].map(normalize_time_period)
+
     orig_unique = sorted(pd.Series(df["Time Period"].astype(str).str.strip().str.upper().unique()).tolist())
     mapped_unique = sorted(pd.Series(df["Time_Period"].astype(str).unique()).tolist())
     log.setdefault("time_period_observed", {})[str(p)] = {
@@ -230,10 +160,8 @@ def load_wmata_tableau(p: Path, default_year: int, log: dict) -> pd.DataFrame:
         "mapped_unique": mapped_unique[:200],
     }
 
-    # Derive weekday/weekend type
     df["Day_Type"] = [derive_day_type(st, dow) for st, dow in zip(df["Service Type"], df["Day of Week"])]
 
-    # Combine tapped + non-tapped counts (fallback to Entries if needed)
     tapped = pd.to_numeric(df["Avg Daily Tapped Entries"], errors="coerce")
     nontap = pd.to_numeric(df["NonTapped Entries"], errors="coerce")
     alt_entries = pd.to_numeric(df["Entries"], errors="coerce")
@@ -241,18 +169,23 @@ def load_wmata_tableau(p: Path, default_year: int, log: dict) -> pd.DataFrame:
     entries = np.where(entries > 0, entries, alt_entries.fillna(0))
     df["Entries"] = entries
 
-    # Keep only needed columns
     keep = ["Station", "Year", "Month", "Time_Period", "Day_Type", "Entries"]
     df = df[keep].copy()
 
-    # Drop rows without a mapped period to keep analysis clean
     before = len(df)
     df = df[df["Time_Period"].isin(VALID_TIME_PERIODS) | df["Time_Period"].isna()].copy()
     dropped = before - len(df)
     if dropped > 0:
         log.setdefault("warnings", []).append(f"Dropped {dropped} rows with unmapped Time_Period in {p.name}")
 
-    # Warn if any mapped but not valid
+    # Log day and time
+    dt_counts = df["Day_Type"].value_counts(dropna=False).to_dict()
+    tp_counts = df["Time_Period"].value_counts(dropna=False).to_dict()
+    log.setdefault("coverage", {})[str(p)] = {
+        "day_type_counts": {str(k): int(v) for k, v in dt_counts.items()},
+        "time_period_counts": {str(k): int(v) for k, v in tp_counts.items()},
+    }
+
     tp_bad = df["Time_Period"].notna() & (~df["Time_Period"].isin(VALID_TIME_PERIODS))
     dt_bad = df["Day_Type"].notna() & (~df["Day_Type"].isin(VALID_DAY_TYPES))
     if int(tp_bad.sum()) > 0:
@@ -262,14 +195,12 @@ def load_wmata_tableau(p: Path, default_year: int, log: dict) -> pd.DataFrame:
     if int(dt_bad.sum()) > 0:
         log.setdefault("warnings", []).append(f"Unrecognized Day_Type values: {int(dt_bad.sum())}")
 
-    # Convert entries to numeric
     df["Entries"] = pd.to_numeric(df["Entries"], errors="coerce").fillna(0)
     return df
 
-# LOAD EACH YEAR
+# Load year
 
 def load_year(year: int, log: dict) -> pd.DataFrame:
-    """Load one year's data, supports single or split tapped/non-tapped files."""
     single = RAW_DIR / f"ridership_{year}.csv"
     tapped = RAW_DIR / f"ridership_{year}_tapped.csv"
     nontapped = RAW_DIR / f"ridership_{year}_nontapped.csv"
@@ -286,20 +217,17 @@ def load_year(year: int, log: dict) -> pd.DataFrame:
     if not parts:
         raise FileNotFoundError(f"No data found for {year}")
 
-    # Combine if split between tapped/non-tapped
     df = pd.concat(parts, ignore_index=True)
     df = df.groupby(["Station", "Year", "Month", "Time_Period", "Day_Type"], as_index=False)["Entries"].sum()
     return df
 
-# MAIN PIPELINE
+# Main
 
 def main():
-    """Combine yearly data, compute recovery ratios vs. 2019 baseline, save CSV + log."""
     os.makedirs(OUT_DIR, exist_ok=True)
     os.makedirs(LOG_DIR, exist_ok=True)
     log = {"notes": [], "files_read": [], "warnings": []}
 
-    # Load and clean all years
     frames = []
     for y in YEARS:
         dfy = load_year(y, log)
@@ -309,31 +237,30 @@ def main():
             log["warnings"].append(f"Dropped {before - len(dfy)} rows missing Station/Year/Month for {y}")
         frames.append(dfy)
 
-    # Combine all years into one dataset
     df = pd.concat(frames, ignore_index=True)
 
-    # Group to remove duplicates
+    # Patch 4: global coverage diagnostics
+    tp_global = df["Time_Period"].value_counts(dropna=False).to_dict()
+    dt_global = df["Day_Type"].value_counts(dropna=False).to_dict()
+    log.setdefault("global_coverage", {})["Time_Period"] = {str(k): int(v) for k, v in tp_global.items()}
+    log.setdefault("global_coverage", {})["Day_Type"] = {str(k): int(v) for k, v in dt_global.items()}
+
     df = df.groupby(["Station", "Year", "Month", "Time_Period", "Day_Type"], as_index=False)["Entries"].sum()
 
-    # Compute 2019 baseline (average entries per station/time period) with min-count guard
     base_raw = df[df["Year"] == 2019].groupby(["Station", "Time_Period"])["Entries"]
     base = base_raw.agg(Entries_2019="mean", n_2019="count").reset_index()
-    # Require at least 10 2019 rows for a baseline; otherwise mark as missing
     base.loc[base["n_2019"] < 10, "Entries_2019"] = np.nan
     base = base.drop(columns=["n_2019"])
 
-    # Join baseline and compute Recovery Ratio
     merged = df.merge(base, on=["Station", "Time_Period"], how="left")
     merged["Denom_Flag"] = merged["Entries_2019"].isna() | (merged["Entries_2019"] == 0)
     merged["Recovery_Ratio"] = np.where(
         merged["Denom_Flag"], np.nan, merged["Entries"] / merged["Entries_2019"]
     )
 
-    # Save final dataset
     merged = merged.sort_values(["Station", "Year", "Month", "Time_Period", "Day_Type"]).reset_index(drop=True)
     merged.to_csv(OUT_CSV, index=False)
 
-    # Export missing baselines for review
     missing_base = merged[merged["Denom_Flag"]].copy()
     if not missing_base.empty:
         diag_dir = LOG_DIR / "diagnostics"
@@ -342,7 +269,6 @@ def main():
             diag_dir / "missing_2019_baseline.csv", index=False
         )
 
-    # Write log file
     summary = {
         "rows_written": int(len(merged)),
         "unique_stations": int(merged["Station"].nunique()),
