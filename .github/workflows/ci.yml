@@ -14,6 +14,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          lfs: false  # set true if your repo actually stores large files via LFS
 
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
@@ -22,8 +24,10 @@ jobs:
 
       - name: Install dependencies
         run: |
+          set -e
           python -m pip install --upgrade pip
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          # Ensure core libs used by the scripts
           pip install pandas openpyxl pyogrio geopandas shapely pyproj
 
       - name: Create fixture data (ridership + DC stations)
@@ -88,7 +92,7 @@ jobs:
             '}' \
             > data_geo/metro_stations.geojson
 
-      # Re-encode fixtures to Tableau-style UTF-16LE comma CSV (Download → Data → CSV)
+      # Re-encode fixtures to Tableau "Download → Data → CSV" format (UTF-16LE, comma CSV)
       - name: Convert fixture CSVs to UTF-16LE (comma CSV)
         run: |
           set -e
@@ -101,38 +105,34 @@ jobs:
 
       - name: Run 01_clean_data.py
         run: |
+          set -e
           python analysis/01_clean_data.py
 
       - name: Show cleaning outputs
         run: |
+          set -e
           ls -lah data_clean || true
           ls -lah results/tables || true
-          python - <<'PY'
-import json
-from pathlib import Path
-p = Path("results/tables/clean_log.json")
-print(p.read_text() if p.exists() else "clean_log.json not found")
-PY
+          python -c "import json, pathlib; p=pathlib.Path('results/tables/clean_log.json'); print(p.read_text() if p.exists() else 'clean_log.json not found')"
 
       - name: Run 02_inference_tests.py
         run: |
+          set -e
           python analysis/02_inference_tests.py
 
       - name: Show inference outputs
         run: |
-          python - <<'PY'
-import json
-from pathlib import Path
-p = Path("results/tables/stats_summary.json")
-print(p.read_text() if p.exists() else "stats_summary.json not found")
-PY
+          set -e
+          python -c "import json, pathlib; p=pathlib.Path('results/tables/stats_summary.json'); print(p.read_text() if p.exists() else 'stats_summary.json not found')"
 
       - name: Run 03_tableau_export.py
         run: |
+          set -e
           python analysis/03_tableau_export.py
 
       - name: Optional - Run 04_validate.py if present
         run: |
+          set -e
           if [ -f analysis/04_validate.py ]; then python analysis/04_validate.py; fi
 
       - name: Upload artifacts (outputs)
