@@ -133,18 +133,25 @@ try:
     m["Day_Type"] = m["Day_Type"].astype("category")
     m["Time_Period"] = m["Time_Period"].astype("category")
 
+    # center Year to make intercept interpretable
+    m["Year_centered"] = m["Year"] - 2019
+
     if len(m) >= 100:  # minimal size guard
-        model = smf.mixedlm("Log_Ratio ~ Day_Type + Time_Period + Year", m, groups=m["Station"], missing="drop")
+        model = smf.mixedlm("Log_Ratio ~ Day_Type + Time_Period + Year_centered", 
+                            m, groups=m["Station"], missing="drop")
         fit = model.fit()
         with open(os.path.join(OUT_DIR, "mixedlm_summary.txt"), "w") as f:
             f.write(str(fit.summary()))
-        results["mixedlm"] = {"converged": bool(fit.converged), "n_obs": int(fit.nobs or len(m))}
+        results["mixedlm"] = {
+            "converged": bool(fit.converged), 
+            "n_obs": int(fit.nobs or len(m))
+        }
     else:
         results["mixedlm"] = {"note": "too few observations"}
 except Exception as e:
     results["mixedlm"] = {"error": str(e)}
 
-# --- Final status -------------------------------------------------------------
+# Final status 
 results["status"] = "ok" if ("weekend_vs_weekday" in results and "time_of_day" in results) else "warning"
 write_summary(results)
 print("Inference finished; see results/tables/")
