@@ -165,6 +165,32 @@ def derive_day_type(service_type: str, day_of_week: str) -> str:
         return "WEEKEND" if d in {"SATURDAY", "SUNDAY"} else "WEEKDAY"
     return np.nan
 
+def _parse_date_series(s: pd.Series) -> pd.Series:
+    """
+    Parse WMATA 'Date' with explicit format when we can, fallback otherwise.
+    Handles:
+      - 'YYYY-MM-DD'  -> %Y-%m-%d
+      - 'MM/DD/YYYY'  -> %m/%d/%Y
+      - Excel serials -> origin='1899-12-30'
+    Returns datetime64[ns].
+    """
+    # Numeric → Excel serials
+    if pd.api.types.is_numeric_dtype(s):
+        return pd.to_datetime(s, origin="1899-12-30", unit="D", errors="coerce")
+
+    # Probe first few non-null values
+    probe = next((str(v) for v in s.dropna().head(50).tolist() if str(v).strip()), "")
+    probe = probe.strip()
+
+    if re.match(r"^\d{4}-\d{2}-\d{2}$", probe):
+        return pd.to_datetime(s, format="%Y-%m-%d", errors="coerce")
+
+    if re.match(r"^\d{1,2}/\d{1,2}/\d{4}$", probe):
+        return pd.to_datetime(s, format="%m/%d/%Y", errors="coerce")
+
+    # Fallback, quiet
+    return pd.to_datetime(s, errors="coerce")
+
 # COLUMN NAMES EXPECTED
 
 EXPECTED_COLS = [
@@ -181,14 +207,14 @@ def load_wmata_tableau(p: Path, default_year: int, log: dict) -> pd.DataFrame:
     df = read_table(p)
     log.setdefault("files_read", []).append({"path": str(p), "rows": int(len(df)), "cols": df.columns.tolist()})
 
-    # Ensure all expected columns exist (some views may omit a few)
+    # Ensure all expected columns exist
     for c in EXPECTED_COLS:
         if c not in df.columns:
             df[c] = np.nan
 
-    # Create Year and Month
+    # Create Year and Month with robust date parsing
     df["Year"] = pd.to_numeric(df["Year of Date"], errors="coerce").astype("Int64")
-    date_parsed = pd.to_datetime(df["Date"], errors="coerce")
+    date_parsed = _parse_date_series(df["Date"])
     df["Year"] = df["Year"].fillna(date_parsed.dt.year).fillna(default_year).astype("Int64")
     df["Month"] = date_parsed.dt.month.astype("Int64")
 
@@ -207,7 +233,7 @@ def load_wmata_tableau(p: Path, default_year: int, log: dict) -> pd.DataFrame:
     # Derive weekday/weekend type
     df["Day_Type"] = [derive_day_type(st, dow) for st, dow in zip(df["Service Type"], df["Day of Week"])]
 
-    # Combine tapped + non-tapped counts
+    # Combine tapped + non-tapped counts (fallback to Entries if needed)
     tapped = pd.to_numeric(df["Avg Daily Tapped Entries"], errors="coerce")
     nontap = pd.to_numeric(df["NonTapped Entries"], errors="coerce")
     alt_entries = pd.to_numeric(df["Entries"], errors="coerce")
@@ -236,7 +262,7 @@ def load_wmata_tableau(p: Path, default_year: int, log: dict) -> pd.DataFrame:
     if int(dt_bad.sum()) > 0:
         log.setdefault("warnings", []).append(f"Unrecognized Day_Type values: {int(dt_bad.sum())}")
 
-    # Convert Entries to numeric
+    # Convert entries to numeric
     df["Entries"] = pd.to_numeric(df["Entries"], errors="coerce").fillna(0)
     return df
 
@@ -289,13 +315,12 @@ def main():
     # Group to remove duplicates
     df = df.groupby(["Station", "Year", "Month", "Time_Period", "Day_Type"], as_index=False)["Entries"].sum()
 
-    # Compute 2019 baseline (average entries per station/time period)
-    base = (
-        df[df["Year"] == 2019]
-        .groupby(["Station", "Time_Period"], as_index=False)["Entries"]
-        .mean()
-        .rename(columns={"Entries": "Entries_2019"})
-    )
+    # Compute 2019 baseline (average entries per station/time period) with min-count guard
+    base_raw = df[df["Year"] == 2019].groupby(["Station", "Time_Period"])["Entries"]
+    base = base_raw.agg(Entries_2019="mean", n_2019="count").reset_index()
+    # Require at least 10 2019 rows for a baseline; otherwise mark as missing
+    base.loc[base["n_2019"] < 10, "Entries_2019"] = np.nan
+    base = base.drop(columns=["n_2019"])
 
     # Join baseline and compute Recovery Ratio
     merged = df.merge(base, on=["Station", "Time_Period"], how="left")
@@ -307,6 +332,15 @@ def main():
     # Save final dataset
     merged = merged.sort_values(["Station", "Year", "Month", "Time_Period", "Day_Type"]).reset_index(drop=True)
     merged.to_csv(OUT_CSV, index=False)
+
+    # Export missing baselines for review
+    missing_base = merged[merged["Denom_Flag"]].copy()
+    if not missing_base.empty:
+        diag_dir = LOG_DIR / "diagnostics"
+        diag_dir.mkdir(parents=True, exist_ok=True)
+        missing_base.sort_values(["Station", "Time_Period", "Year", "Month"]).to_csv(
+            diag_dir / "missing_2019_baseline.csv", index=False
+        )
 
     # Write log file
     summary = {
