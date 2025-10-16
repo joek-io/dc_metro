@@ -18,42 +18,58 @@ YEARS = [2019, 2023, 2024, 2025]
 # FILE READING HELPERS
 
 def _looks_utf16(p: Path) -> bool:
-    """Check if file starts with UTF-16LE byte order mark (BOM)."""
+    """Check if file starts with UTF-16LE BOM or contains NULs in first bytes."""
     with open(p, "rb") as fb:
         head = fb.read(4)
     return head.startswith(b"\xff\xfe") or b"\x00" in head
 
+def _sniff_sep(sample: str) -> str:
+    """Pick a delimiter from sample text, preferring tab if present."""
+    tabs = sample.count("\t")
+    commas = sample.count(",")
+    semis = sample.count(";")
+    if tabs >= max(commas, semis):
+        return "\t"
+    if semis > commas:
+        return ";"
+    return ","  # default
+
 def read_table(p: Path) -> pd.DataFrame:
-    """Read CSV or Excel file. Automatically detects UTF-16LE or UTF-8 encoding."""
+    """Read CSV/Excel and sniff encoding + delimiter per file."""
+    # Excel
     if p.suffix.lower() in {".xlsx", ".xls"}:
         try:
             return pd.read_excel(p, engine="openpyxl")
         except Exception:
             return pd.read_excel(p)
 
+    # UTF-16LE CSV/TSV (Tableau Download → Data often is UTF-16LE TSV)
     if _looks_utf16(p):
-        return pd.read_csv(p, encoding="utf-16le", engine="python")
+        with open(p, "r", encoding="utf-16le", errors="replace", newline="") as f:
+            sample = "".join([f.readline() for _ in range(25)])
+        sep = _sniff_sep(sample)
+        return pd.read_csv(p, encoding="utf-16le", sep=sep, engine="python")
 
-    # If not UTF-16, try UTF-8 and guess delimiter
+    # UTF-8 CSV/TSV
     import csv
     with open(p, "r", encoding="utf-8", errors="replace", newline="") as f:
         sample = "".join([f.readline() for _ in range(25)])
     try:
         sep = csv.Sniffer().sniff(sample, delimiters=[",", ";", "\t", "|"]).delimiter
     except Exception:
-        sep = ","
+        sep = _sniff_sep(sample)
     return pd.read_csv(p, encoding="utf-8", sep=sep, engine="python")
 
 # DATA CLEANING HELPERS
 
 def normalize_station(x: str) -> str:
     """Clean and standardize station names for consistent matching."""
-    if pd.isna(x): 
+    if pd.isna(x):
         return "UNKNOWN"
     s = str(x).upper().strip()
-    s = re.sub(r"[.]", "", s)        # remove periods
-    s = re.sub(r"[–—]+", "-", s)     # replace long dashes with hyphen
-    s = re.sub(r"\s+", " ", s).strip()  # remove extra spaces
+    s = re.sub(r"[.]", "", s)          # remove periods
+    s = re.sub(r"[–—]+", "-", s)       # replace long dashes with hyphen
+    s = re.sub(r"\s+", " ", s).strip() # collapse spaces
     return s or "UNKNOWN"
 
 # Map for cleaning time period names
@@ -69,7 +85,7 @@ VALID_DAY_TYPES = {"WEEKDAY", "WEEKEND"}
 
 def normalize_time_period(x: str) -> str:
     """Convert time period text to standard short form."""
-    if pd.isna(x): 
+    if pd.isna(x):
         return np.nan
     t = str(x).upper().strip()
     return TIME_PERIOD_MAP.get(t, t)
@@ -124,7 +140,7 @@ def load_wmata_tableau(p: Path, default_year: int, log: dict) -> pd.DataFrame:
         derive_day_type(st, dow) for st, dow in zip(df["Service Type"], df["Day of Week"])
     ]
 
-    # Combine tapped + non-tapped counts
+    # Combine tapped + non-tapped counts (fallback to Entries if needed)
     tapped = pd.to_numeric(df["Avg Daily Tapped Entries"], errors="coerce")
     nontap = pd.to_numeric(df["NonTapped Entries"], errors="coerce")
     alt_entries = pd.to_numeric(df["Entries"], errors="coerce")
@@ -216,7 +232,7 @@ def main():
     merged = merged.sort_values(["Station", "Year", "Month", "Time_Period", "Day_Type"]).reset_index(drop=True)
     merged.to_csv(OUT_CSV, index=False)
 
-    # Write simple log file
+    # Write log file
     summary = {
         "rows_written": int(len(merged)),
         "unique_stations": int(merged["Station"].nunique()),
