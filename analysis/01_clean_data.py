@@ -239,7 +239,7 @@ def main():
 
     df = pd.concat(frames, ignore_index=True)
 
-    # Patch 4: global coverage diagnostics
+    # Global coverage diagnostics
     tp_global = df["Time_Period"].value_counts(dropna=False).to_dict()
     dt_global = df["Day_Type"].value_counts(dropna=False).to_dict()
     log.setdefault("global_coverage", {})["Time_Period"] = {str(k): int(v) for k, v in tp_global.items()}
@@ -247,20 +247,60 @@ def main():
 
     df = df.groupby(["Station", "Year", "Month", "Time_Period", "Day_Type"], as_index=False)["Entries"].sum()
 
-    base_raw = df[df["Year"] == 2019].groupby(["Station", "Time_Period"])["Entries"]
-    base = base_raw.agg(Entries_2019="mean", n_2019="count").reset_index()
-    base.loc[base["n_2019"] < 1, "Entries_2019"] = np.nan
-    base = base.drop(columns=["n_2019"])
+    # Dual baselines (period + station) with fallback
+    MIN_BASELINE_COUNT = 1  # keep at 1 per your test
 
-    merged = df.merge(base, on=["Station", "Time_Period"], how="left")
-    merged["Denom_Flag"] = merged["Entries_2019"].isna() | (merged["Entries_2019"] == 0)
-    merged["Recovery_Ratio"] = np.where(
-        merged["Denom_Flag"], np.nan, merged["Entries"] / merged["Entries_2019"]
+    # Period baseline (Station × Time_Period)
+    base_raw = df[df["Year"] == 2019].groupby(["Station", "Time_Period"])["Entries"]
+    base_period = base_raw.agg(Entries_2019="mean", n_2019="count").reset_index()
+    base_period.loc[base_period["n_2019"] < MIN_BASELINE_COUNT, "Entries_2019"] = np.nan
+    base_period = base_period.drop(columns=["n_2019"])
+
+    # Station baseline (Station)
+    base_station_raw = df[df["Year"] == 2019].groupby(["Station"])["Entries"]
+    base_station = base_station_raw.agg(Entries_2019_station="mean", n_2019_station="count").reset_index()
+    base_station.loc[base_station["n_2019_station"] < MIN_BASELINE_COUNT, "Entries_2019_station"] = np.nan
+    base_station = base_station.drop(columns=["n_2019_station"])
+
+    # Join baselines
+    merged = df.merge(base_period, on=["Station", "Time_Period"], how="left")
+    merged = merged.merge(base_station, on="Station", how="left")
+
+    # Preferred period baseline; fallback to station baseline when missing
+    merged["Entries_2019_final"] = merged["Entries_2019"]
+    need_fallback = merged["Entries_2019_final"].isna() | (merged["Entries_2019_final"] == 0)
+    merged.loc[need_fallback, "Entries_2019_final"] = merged.loc[need_fallback, "Entries_2019_station"]
+
+    # Flags and ratios (keep original + station + final)
+    merged["Denom_Flag_Period"] = merged["Entries_2019"].isna() | (merged["Entries_2019"] == 0)
+    merged["Denom_Flag_Station"] = merged["Entries_2019_station"].isna() | (merged["Entries_2019_station"] == 0)
+    merged["Denom_Flag"] = merged["Entries_2019_final"].isna() | (merged["Entries_2019_final"] == 0)
+
+    merged["Recovery_Ratio_Period"] = np.where(
+        merged["Denom_Flag_Period"], np.nan, merged["Entries"] / merged["Entries_2019"]
     )
+    merged["Recovery_Ratio_Station"] = np.where(
+        merged["Denom_Flag_Station"], np.nan, merged["Entries"] / merged["Entries_2019_station"]
+    )
+    merged["Recovery_Ratio_Final"] = np.where(
+        merged["Denom_Flag"], np.nan, merged["Entries"] / merged["Entries_2019_final"]
+    )
+
+    # Log how many rows used fallback
+    used_fallback = int(need_fallback.sum())
+    log.setdefault("notes", []).append(f"Applied station baseline fallback to {used_fallback} rows.")
+
+    # Post-merge coverage on usable Recovery_Ratio_Final 
+    valid_rr = merged[~merged["Recovery_Ratio_Final"].isna()]
+    rr_counts_by_daytype = valid_rr["Day_Type"].value_counts(dropna=False).to_dict()
+    rr_counts_by_period = valid_rr["Time_Period"].value_counts(dropna=False).to_dict()
+    log.setdefault("postmerge_recovery_coverage", {})["by_day_type"] = {str(k): int(v) for k, v in rr_counts_by_daytype.items()}
+    log.setdefault("postmerge_recovery_coverage", {})["by_time_period"] = {str(k): int(v) for k, v in rr_counts_by_period.items()}
 
     merged = merged.sort_values(["Station", "Year", "Month", "Time_Period", "Day_Type"]).reset_index(drop=True)
     merged.to_csv(OUT_CSV, index=False)
 
+    # Export missing baselines for review (using final denominator flag)
     missing_base = merged[merged["Denom_Flag"]].copy()
     if not missing_base.empty:
         diag_dir = LOG_DIR / "diagnostics"
@@ -273,7 +313,7 @@ def main():
         "rows_written": int(len(merged)),
         "unique_stations": int(merged["Station"].nunique()),
         "denom_missing": int(merged["Denom_Flag"].sum()),
-        "recovery_nan": int(merged["Recovery_Ratio"].isna().sum()),
+        "recovery_nan": int(merged["Recovery_Ratio_Final"].isna().sum()),
     }
     with open(LOG_JSON, "w") as f:
         json.dump({"summary": summary, **log}, f, indent=2)
