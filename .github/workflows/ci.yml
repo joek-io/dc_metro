@@ -36,39 +36,39 @@ jobs:
 
           # 2019 baseline (monthly, per station, per period/daytype)
           cat > data_raw/ridership_2019.csv << 'EOF'
-Station,Year,Month,Time_Period,Day_Type,Entries
-GALLERY PL-CHINATOWN,2019,1,AM,Weekday,100
-GALLERY PL-CHINATOWN,2019,1,Midday,Weekday,80
-GALLERY PL-CHINATOWN,2019,1,PM,Weekday,120
-GALLERY PL-CHINATOWN,2019,1,Evening,Weekday,60
-UNION STATION,2019,1,AM,Weekday,150
-UNION STATION,2019,1,Midday,Weekday,90
-UNION STATION,2019,1,PM,Weekday,130
-UNION STATION,2019,1,Evening,Weekday,70
-GALLERY PL-CHINATOWN,2019,1,AM,Weekend,40
-UNION STATION,2019,1,AM,Weekend,50
-EOF
+          Station,Year,Month,Time_Period,Day_Type,Entries
+          GALLERY PL-CHINATOWN,2019,1,AM,Weekday,100
+          GALLERY PL-CHINATOWN,2019,1,Midday,Weekday,80
+          GALLERY PL-CHINATOWN,2019,1,PM,Weekday,120
+          GALLERY PL-CHINATOWN,2019,1,Evening,Weekday,60
+          UNION STATION,2019,1,AM,Weekday,150
+          UNION STATION,2019,1,Midday,Weekday,90
+          UNION STATION,2019,1,PM,Weekday,130
+          UNION STATION,2019,1,Evening,Weekday,70
+          GALLERY PL-CHINATOWN,2019,1,AM,Weekend,40
+          UNION STATION,2019,1,AM,Weekend,50
+          EOF
 
           # 2023 split files: tapped and non-tapped (same schema: Entries column)
           cat > data_raw/ridership_2023_tapped.csv << 'EOF'
-Station,Year,Month,Time_Period,Day_Type,Entries
-GALLERY PL-CHINATOWN,2023,1,AM,Weekday,82
-GALLERY PL-CHINATOWN,2023,1,Midday,Weekday,75
-UNION STATION,2023,1,AM,Weekday,140
-UNION STATION,2023,1,PM,Weekday,110
-GALLERY PL-CHINATOWN,2023,1,AM,Weekend,35
-UNION STATION,2023,1,AM,Weekend,45
-EOF
+          Station,Year,Month,Time_Period,Day_Type,Entries
+          GALLERY PL-CHINATOWN,2023,1,AM,Weekday,82
+          GALLERY PL-CHINATOWN,2023,1,Midday,Weekday,75
+          UNION STATION,2023,1,AM,Weekday,140
+          UNION STATION,2023,1,PM,Weekday,110
+          GALLERY PL-CHINATOWN,2023,1,AM,Weekend,35
+          UNION STATION,2023,1,AM,Weekend,45
+          EOF
 
           cat > data_raw/ridership_2023_nontapped.csv << 'EOF'
-Station,Year,Month,Time_Period,Day_Type,Entries
-GALLERY PL-CHINATOWN,2023,1,AM,Weekday,3
-GALLERY PL-CHINATOWN,2023,1,Midday,Weekday,2
-UNION STATION,2023,1,AM,Weekday,4
-UNION STATION,2023,1,PM,Weekday,3
-GALLERY PL-CHINATOWN,2023,1,AM,Weekend,1
-UNION STATION,2023,1,AM,Weekend,2
-EOF
+          Station,Year,Month,Time_Period,Day_Type,Entries
+          GALLERY PL-CHINATOWN,2023,1,AM,Weekday,3
+          GALLERY PL-CHINATOWN,2023,1,Midday,Weekday,2
+          UNION STATION,2023,1,AM,Weekday,4
+          UNION STATION,2023,1,PM,Weekday,3
+          GALLERY PL-CHINATOWN,2023,1,AM,Weekend,1
+          UNION STATION,2023,1,AM,Weekend,2
+          EOF
 
           # Minimal GeoJSON for DC stations (NAME attribute expected by script)
           cat > data_geo/metro_stations.geojson << 'EOF'
