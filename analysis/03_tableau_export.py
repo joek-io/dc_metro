@@ -14,7 +14,7 @@ g = gpd.read_file(STATIONS)
 
 df["Station"] = df["Station"].astype(str).str.upper().str.strip()
 
-# Choose a likely name column
+# Choose name column
 name_candidates = [c for c in ["NAME","STATION","STATION_NAME","NAME_LONG","NAME1"] if c in g.columns]
 if not name_candidates:
     name_candidates = [c for c in g.columns if c != "geometry"]
