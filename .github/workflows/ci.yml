@@ -91,6 +91,18 @@ jobs:
           }
           EOF
 
+      - name: Convert fixture CSVs to Tableau-style UTF-16LE TSVs
+              run: |
+                python - << 'PY'
+      import pandas as pd, os, glob
+      os.makedirs("data_raw", exist_ok=True)
+      for f in glob.glob("data_raw/*.csv"):
+          df = pd.read_csv(f)
+          tsv_path = f.replace(".csv", ".tsv")
+          df.to_csv(tsv_path, sep="\t", index=False, encoding="utf-16le")
+          print(f"Converted {f} -> {tsv_path}")
+      PY
+
       - name: Run 01_clean_data.py
         run: |
           python analysis/01_clean_data.py
