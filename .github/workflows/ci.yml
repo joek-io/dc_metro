@@ -93,18 +93,14 @@ jobs:
 
                   - name: Convert fixture CSVs to Tableau-style UTF-16LE CSVs
                     run: |
-                      python - << 'PY'
-                      import pandas as pd, os, glob
-
-                      os.makedirs("data_raw", exist_ok=True)
-
-                      # Re-encode each CSV to UTF-16LE with comma separator
-                      for f in glob.glob("data_raw/*.csv"):
-                        df = pd.read_csv(f)
-                        df.to_csv(f, index=False, encoding="utf-16le")
-                        print(f"Re-encoded {f} to UTF-16LE")
-
-                      PY
+                    set -e
+                    for f in data_raw/*.csv; do
+                      [ -f "$f" ] || continue
+                      # Re-encode UTF-8 -> UTF-16LE while keeping commas
+                      iconv -f UTF-8 -t UTF-16LE "$f" > "${f}.utf16le"
+                      mv "${f}.utf16le" "$f"
+                      echo "Re-encoded $f to UTF-16LE"
+                    done
 
       - name: Run 01_clean_data.py
         run: |
