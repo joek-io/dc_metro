@@ -1,167 +1,232 @@
-
-import os
-import re
-import pandas as pd
-import numpy as np
+import os, re, json
 from pathlib import Path
+import numpy as np
+import pandas as pd
 
-RAW_DIR = "data_raw"
-OUT = "data_clean/station_monthly_recovery.csv"
+# Folder paths
+RAW_DIR = Path("data_raw")
+OUT_DIR = Path("data_clean")
+LOG_DIR = Path("results/tables")
+
+# Output files
+OUT_CSV = OUT_DIR / "station_monthly_recovery.csv"
+LOG_JSON = LOG_DIR / "clean_log.json"
+
+# Years to process
 YEARS = [2019, 2023, 2024, 2025]
 
-COL_ALIASES = {
-    "station": "Station",
-    "station_name": "Station",
-    "name": "Station",
-    "line": "Line",
-    "year": "Year",
-    "yr": "Year",
-    "month": "Month",
-    "mo": "Month",
-    "time_period": "Time_Period",
-    "timeperiod": "Time_Period",
-    "time_period_name": "Time_Period",
-    "day_type": "Day_Type",
-    "daytype": "Day_Type",
-    "entries": "Entries",
-    "tapped_entries": "Average_Daily_Tapped_Entries",
-    "non_tapped_entries": "Average_Daily_Non_Tapped_Entries",
-    "average_daily_tapped_entries": "Average_Daily_Tapped_Entries",
-    "average_daily_non_tapped_entries": "Average_Daily_Non_Tapped_Entries",
-    "avg_daily_tapped_entries": "Average_Daily_Tapped_Entries",
-    "avg_daily_non_tapped_entries": "Average_Daily_Non_Tapped_Entries",
-    "date": "Date",
+# FILE READING HELPERS
+
+def _looks_utf16(p: Path) -> bool:
+    """Check if file starts with UTF-16LE byte order mark (BOM)."""
+    with open(p, "rb") as fb:
+        head = fb.read(4)
+    return head.startswith(b"\xff\xfe") or b"\x00" in head
+
+def read_table(p: Path) -> pd.DataFrame:
+    """Read CSV or Excel file. Automatically detects UTF-16LE or UTF-8 encoding."""
+    if p.suffix.lower() in {".xlsx", ".xls"}:
+        try:
+            return pd.read_excel(p, engine="openpyxl")
+        except Exception:
+            return pd.read_excel(p)
+
+    if _looks_utf16(p):
+        return pd.read_csv(p, encoding="utf-16le", engine="python")
+
+    # If not UTF-16, try UTF-8 and guess delimiter
+    import csv
+    with open(p, "r", encoding="utf-8", errors="replace", newline="") as f:
+        sample = "".join([f.readline() for _ in range(25)])
+    try:
+        sep = csv.Sniffer().sniff(sample, delimiters=[",", ";", "\t", "|"]).delimiter
+    except Exception:
+        sep = ","
+    return pd.read_csv(p, encoding="utf-8", sep=sep, engine="python")
+
+# DATA CLEANING HELPERS
+
+def normalize_station(x: str) -> str:
+    """Clean and standardize station names for consistent matching."""
+    if pd.isna(x): 
+        return "UNKNOWN"
+    s = str(x).upper().strip()
+    s = re.sub(r"[.]", "", s)        # remove periods
+    s = re.sub(r"[–—]+", "-", s)     # replace long dashes with hyphen
+    s = re.sub(r"\s+", " ", s).strip()  # remove extra spaces
+    return s or "UNKNOWN"
+
+# Map for cleaning time period names
+TIME_PERIOD_MAP = {
+    "AM PEAK": "AM", "AM": "AM",
+    "MIDDAY": "MIDDAY", "MID DAY": "MIDDAY",
+    "PM PEAK": "PM", "PM": "PM",
+    "EVENING": "EVENING", "EVE": "EVENING"
 }
 
-def standardize_columns(df):
-    df = df.copy()
-    df.columns = [re.sub(r"\s+", "_", c.strip()).lower() for c in df.columns]
-    rename_map = {}
-    for c in df.columns:
-        if c in COL_ALIASES:
-            rename_map[c] = COL_ALIASES[c]
-    df.rename(columns=rename_map, inplace=True)
+VALID_TIME_PERIODS = {"AM", "MIDDAY", "PM", "EVENING"}
+VALID_DAY_TYPES = {"WEEKDAY", "WEEKEND"}
+
+def normalize_time_period(x: str) -> str:
+    """Convert time period text to standard short form."""
+    if pd.isna(x): 
+        return np.nan
+    t = str(x).upper().strip()
+    return TIME_PERIOD_MAP.get(t, t)
+
+def derive_day_type(service_type: str, day_of_week: str) -> str:
+    """Use 'Service Type' or 'Day of Week' to classify as WEEKDAY or WEEKEND."""
+    if isinstance(service_type, str) and service_type.strip():
+        st = service_type.strip().upper()
+        if st == "WEEKDAY": return "WEEKDAY"
+        if st in {"SATURDAY", "SUNDAY"}: return "WEEKEND"
+        if st == "HOLIDAY": return "WEEKDAY"  # change to WEEKEND if desired
+    if isinstance(day_of_week, str) and day_of_week.strip():
+        d = day_of_week.strip().upper()
+        return "WEEKEND" if d in {"SATURDAY", "SUNDAY"} else "WEEKDAY"
+    return np.nan
+
+# COLUMN NAMES EXPECTED
+
+EXPECTED_COLS = [
+    "Year of Date", "Date", "Day of Week", "Holiday", "Service Type",
+    "Station Name", "Time Period", "Avg Daily Tapped Entries",
+    "Entries", "NonTapped Entries", "SUM([NonTapped Entries])/COUNTD([Date])",
+    "Tap Entries"
+]
+
+# LOAD WMATA TABLEAU FILE
+
+def load_wmata_tableau(p: Path, default_year: int, log: dict) -> pd.DataFrame:
+    """Load and clean a single WMATA CSV exported from the Ridership Portal."""
+    df = read_table(p)
+    log.setdefault("files_read", []).append({"path": str(p), "rows": int(len(df)), "cols": df.columns.tolist()})
+
+    # Ensure all expected columns exist
+    for c in EXPECTED_COLS:
+        if c not in df.columns:
+            df[c] = np.nan
+
+    # Create Year and Month
+    df["Year"] = pd.to_numeric(df["Year of Date"], errors="coerce").astype("Int64")
+    date_parsed = pd.to_datetime(df["Date"], errors="coerce")
+    df["Year"] = df["Year"].fillna(date_parsed.dt.year).fillna(default_year).astype("Int64")
+    df["Month"] = date_parsed.dt.month.astype("Int64")
+
+    # Clean station names
+    df["Station"] = df["Station Name"].map(normalize_station)
+
+    # Standardize time periods
+    df["Time_Period"] = df["Time Period"].map(normalize_time_period)
+
+    # Derive weekday/weekend type
+    df["Day_Type"] = [
+        derive_day_type(st, dow) for st, dow in zip(df["Service Type"], df["Day of Week"])
+    ]
+
+    # Combine tapped + non-tapped counts
+    tapped = pd.to_numeric(df["Avg Daily Tapped Entries"], errors="coerce")
+    nontap = pd.to_numeric(df["NonTapped Entries"], errors="coerce")
+    alt_entries = pd.to_numeric(df["Entries"], errors="coerce")
+    entries = tapped.fillna(0) + nontap.fillna(0)
+    entries = np.where(entries > 0, entries, alt_entries.fillna(0))
+    df["Entries"] = entries
+
+    # Keep only needed columns
+    keep = ["Station", "Year", "Month", "Time_Period", "Day_Type", "Entries"]
+    df = df[keep].copy()
+
+    # Warn if there are unexpected values
+    tp_bad = df["Time_Period"].notna() & (~df["Time_Period"].isin(VALID_TIME_PERIODS))
+    dt_bad = df["Day_Type"].notna() & (~df["Day_Type"].isin(VALID_DAY_TYPES))
+    if int(tp_bad.sum()) > 0:
+        log.setdefault("warnings", []).append(f"Unrecognized Time_Period values: {int(tp_bad.sum())}")
+    if int(dt_bad.sum()) > 0:
+        log.setdefault("warnings", []).append(f"Unrecognized Day_Type values: {int(dt_bad.sum())}")
+
+    # Convert Entries to numeric
+    df["Entries"] = pd.to_numeric(df["Entries"], errors="coerce").fillna(0)
     return df
 
-def load_single_csv(path, default_year=None):
-    df = pd.read_csv(path, encoding="utf-16le", sep="\t", engine="python")
-    df = standardize_columns(df)
+# LOAD EACH YEAR
 
-    # Get Year/Month from Date if not found
-    if ("Year" not in df.columns) or ("Month" not in df.columns):
-        if "Date" in df.columns:
-            dt = pd.to_datetime(df["Date"], errors="coerce")
-            if "Year" not in df.columns:
-                df["Year"] = dt.dt.year
-            if "Month" not in df.columns:
-                df["Month"] = dt.dt.month
-        elif (default_year is not None) and ("Year" not in df.columns):
-            df["Year"] = default_year
+def load_year(year: int, log: dict) -> pd.DataFrame:
+    """Load one year's data, supports single or split tapped/non-tapped files."""
+    single = RAW_DIR / f"ridership_{year}.csv"
+    tapped = RAW_DIR / f"ridership_{year}_tapped.csv"
+    nontapped = RAW_DIR / f"ridership_{year}_nontapped.csv"
+    non_tapped_alt = RAW_DIR / f"ridership_{year}_non_tapped.csv"
 
-    # Ensure columns exist
-    for col in ["Station","Year","Month","Time_Period","Day_Type"]:
-        if col not in df.columns:
-            if col in ("Time_Period","Day_Type"):
-                df[col] = np.nan
-            elif col == "Station":
-                for alt in ["STOP_NAME","NAME"]:
-                    if alt in df.columns:
-                        df["Station"] = df[alt]
-                        break
-                if "Station" not in df.columns:
-                    df["Station"] = "UNKNOWN"
-            elif col == "Month":
-                df["Month"] = 1
-            elif col == "Year":
-                df["Year"] = default_year if default_year else 2019
-
-    # Combine Entries from tapped/non-tapped for post 2019 data
-    tapped = df["Average_Daily_Tapped_Entries"] if "Average_Daily_Tapped_Entries" in df.columns else None
-    nontap = df["Average_Daily_Non_Tapped_Entries"] if "Average_Daily_Non_Tapped_Entries" in df.columns else None
-
-    if (tapped is not None) or (nontap is not None):
-        df["Entries"] = (tapped.fillna(0) if tapped is not None else 0) + (nontap.fillna(0) if nontap is not None else 0)
-    else:
-        if "Entries" not in df.columns:
-            for alt in ["entry","ridership","avg_entries","average_entries","total_entries"]:
-                if alt in df.columns:
-                    df["Entries"] = df[alt]
-                    break
-
-    keep = ["Station","Year","Month","Time_Period","Day_Type","Entries"]
-    for k in keep:
-        if k not in df.columns:
-            df[k] = np.nan
-    return df[keep]
-
-def load_year(y):
-    base = Path(RAW_DIR)
-    direct = base / f"ridership_{y}.csv"
-    tap = base / f"ridership_{y}_tapped.csv"
-    non = base / f"ridership_{y}_nontapped.csv"
-    non2 = base / f"ridership_{y}_non_tapped.csv"
-
-    if direct.exists():
-        df = load_single_csv(direct, default_year=y)
-        df["Year"] = y
-        return df
+    if single.exists():
+        return load_wmata_tableau(single, default_year=year, log=log)
 
     parts = []
-    if tap.exists():
-        parts.append(("tap", load_single_csv(tap, default_year=y).rename(columns={"Entries":"Entries_Tapped"})))
-    if non.exists():
-        parts.append(("non", load_single_csv(non, default_year=y).rename(columns={"Entries":"Entries_NonTapped"})))
-    if non2.exists():
-        parts.append(("non", load_single_csv(non2, default_year=y).rename(columns={"Entries":"Entries_NonTapped"})))
+    for f in [tapped, nontapped, non_tapped_alt]:
+        if f.exists():
+            parts.append(load_wmata_tableau(f, default_year=year, log=log))
 
-    if len(parts) == 0:
-        raise FileNotFoundError(f"No CSV found for year {y} in {RAW_DIR}. Provide ridership_{y}.csv or ridership_{y}_tapped.csv and ridership_{y}_nontapped.csv")
+    if not parts:
+        raise FileNotFoundError(f"No data found for {year}")
 
-    keys = ["Station","Year","Month","Time_Period","Day_Type"]
-    merged = None
-    for tag, part in parts:
-        if merged is None:
-            merged = part
-        else:
-            merged = merged.merge(part, on=keys, how="outer")
+    # Combine if split between tapped/non-tapped
+    df = pd.concat(parts, ignore_index=True)
+    df = df.groupby(["Station", "Year", "Month", "Time_Period", "Day_Type"], as_index=False)["Entries"].sum()
+    return df
 
-    if "Entries" not in merged.columns:
-        merged["Entries"] = merged.get("Entries_Tapped", pd.Series(0, index=merged.index)).fillna(0) + merged.get("Entries_NonTapped", pd.Series(0, index=merged.index)).fillna(0)
-
-    out = merged[["Station","Year","Month","Time_Period","Day_Type","Entries"]].copy()
-    return out
+# MAIN PIPELINE
 
 def main():
-    all_years = []
+    """Combine yearly data, compute recovery ratios vs. 2019 baseline, save CSV + log."""
+    os.makedirs(OUT_DIR, exist_ok=True)
+    os.makedirs(LOG_DIR, exist_ok=True)
+    log = {"notes": [], "files_read": [], "warnings": []}
+
+    # Load and clean all years
+    frames = []
     for y in YEARS:
-        dfy = load_year(y)
-        dfy["Station"] = dfy["Station"].astype(str).str.upper().str.strip()
-        for col in ["Time_Period","Day_Type"]:
-            dfy[col] = dfy[col].astype(str).str.strip()
-        dfy["Year"] = pd.to_numeric(dfy["Year"], errors="coerce").astype("Int64")
-        dfy["Month"] = pd.to_numeric(dfy["Month"], errors="coerce").astype("Int64")
-        all_years.append(dfy)
+        dfy = load_year(y, log)
+        before = len(dfy)
+        dfy = dfy.dropna(subset=["Station", "Year", "Month"]).copy()
+        if len(dfy) < before:
+            log["warnings"].append(f"Dropped {before - len(dfy)} rows missing Station/Year/Month for {y}")
+        frames.append(dfy)
 
-    df = pd.concat(all_years, ignore_index=True)
-    df["Month"] = df["Month"].clip(lower=1, upper=12)
+    # Combine all years into one dataset
+    df = pd.concat(frames, ignore_index=True)
 
-    agg = (df
-           .groupby(["Station","Year","Month","Time_Period","Day_Type"], as_index=False)
-           .agg(Entries=("Entries","sum"))
+    # Group to remove duplicates
+    df = df.groupby(["Station", "Year", "Month", "Time_Period", "Day_Type"], as_index=False)["Entries"].sum()
+
+    # Compute 2019 baseline (average entries per station/time period)
+    base = (
+        df[df["Year"] == 2019]
+        .groupby(["Station", "Time_Period"], as_index=False)["Entries"]
+        .mean()
+        .rename(columns={"Entries": "Entries_2019"})
     )
 
-    base = (agg[agg["Year"]==2019]
-            .groupby(["Station","Time_Period"], as_index=False)["Entries"].mean()
-            .rename(columns={"Entries":"Entries_2019"}))
+    # Join baseline and compute Recovery Ratio
+    merged = df.merge(base, on=["Station", "Time_Period"], how="left")
+    merged["Denom_Flag"] = merged["Entries_2019"].isna() | (merged["Entries_2019"] == 0)
+    merged["Recovery_Ratio"] = np.where(
+        merged["Denom_Flag"], np.nan, merged["Entries"] / merged["Entries_2019"]
+    )
 
-    merged = agg.merge(base, on=["Station","Time_Period"], how="left")
+    # Save final dataset
+    merged = merged.sort_values(["Station", "Year", "Month", "Time_Period", "Day_Type"]).reset_index(drop=True)
+    merged.to_csv(OUT_CSV, index=False)
 
-    merged["Recovery_Ratio"] = merged["Entries"] / merged["Entries_2019"]
-    merged["Denom_Flag"] = merged["Entries_2019"].isna() | (merged["Entries_2019"]==0)
+    # Write simple log file
+    summary = {
+        "rows_written": int(len(merged)),
+        "unique_stations": int(merged["Station"].nunique()),
+        "denom_missing": int(merged["Denom_Flag"].sum()),
+        "recovery_nan": int(merged["Recovery_Ratio"].isna().sum()),
+    }
+    with open(LOG_JSON, "w") as f:
+        json.dump({"summary": summary, **log}, f, indent=2)
 
-    os.makedirs("data_clean", exist_ok=True)
-    merged.to_csv(OUT, index=False)
-    print(f"Saved {OUT} with {len(merged):,} rows.")
+    print(f"Wrote {OUT_CSV} with {len(merged)} rows")
 
 if __name__ == "__main__":
     main()
