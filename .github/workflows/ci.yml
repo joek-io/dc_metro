@@ -43,50 +43,84 @@ jobs:
           pip install pandas openpyxl pyogrio geopandas shapely pyproj
           pip install pytest flake8
 
-      - name: Create fixture data
+      - name: Create WMATA-style fixture data (2019 single, 2023 single, 2024/2025 split)
         run: |
           set -e
           mkdir -p data_raw data_geo results/tables data_clean
 
+          # HEADER (kept identical across all fixtures)
+          # Year of Date,Date,Day of Week,Holiday,Service Type,Station Name,Time Period,Avg Daily Tapped Entries,Entries,NonTapped Entries,SUM([NonTapped Entries])/COUNTD([Date]),Tap Entries
+
+          # ---- 2019 baseline (single file)
           printf '%s\n' \
-            'Station,Year,Month,Time_Period,Day_Type,Entries' \
-            'GALLERY PL-CHINATOWN,2019,1,AM,Weekday,100' \
-            'GALLERY PL-CHINATOWN,2019,1,Midday,Weekday,80' \
-            'GALLERY PL-CHINATOWN,2019,1,PM,Weekday,120' \
-            'GALLERY PL-CHINATOWN,2019,1,Evening,Weekday,60' \
-            'UNION STATION,2019,1,AM,Weekday,150' \
-            'UNION STATION,2019,1,Midday,Weekday,90' \
-            'UNION STATION,2019,1,PM,Weekday,130' \
-            'UNION STATION,2019,1,Evening,Weekday,70' \
-            'GALLERY PL-CHINATOWN,2019,1,AM,Weekend,40' \
-            'UNION STATION,2019,1,AM,Weekend,50' \
+            'Year of Date,Date,Day of Week,Holiday,Service Type,Station Name,Time Period,Avg Daily Tapped Entries,Entries,NonTapped Entries,SUM([NonTapped Entries])/COUNTD([Date]),Tap Entries' \
+            '2019,2019-01-15,Tuesday,,Weekday,GALLERY PL-CHINATOWN,AM Peak,95,,5,,95' \
+            '2019,2019-01-15,Tuesday,,Weekday,GALLERY PL-CHINATOWN,Midday,75,,5,,75' \
+            '2019,2019-01-15,Tuesday,,Weekday,GALLERY PL-CHINATOWN,PM Peak,115,,5,,115' \
+            '2019,2019-01-15,Tuesday,,Weekday,GALLERY PL-CHINATOWN,Evening,55,,5,,55' \
+            '2019,2019-01-12,Saturday,,Saturday,UNION STATION,AM Peak,48,,2,,48' \
+            '2019,2019-01-12,Saturday,,Saturday,UNION STATION,PM Peak,68,,2,,68' \
             > data_raw/ridership_2019.csv
 
+          # ---- 2023 (single file)
           printf '%s\n' \
-            'Station,Year,Month,Time_Period,Day_Type,Entries' \
-            'GALLERY PL-CHINATOWN,2023,1,AM,Weekday,82' \
-            'GALLERY PL-CHINATOWN,2023,1,Midday,Weekday,75' \
-            'UNION STATION,2023,1,AM,Weekday,140' \
-            'UNION STATION,2023,1,PM,Weekday,110' \
-            'GALLERY PL-CHINATOWN,2023,1,AM,Weekend,35' \
-            'UNION STATION,2023,1,AM,Weekend,45' \
-            > data_raw/ridership_2023_tapped.csv
+            'Year of Date,Date,Day of Week,Holiday,Service Type,Station Name,Time Period,Avg Daily Tapped Entries,Entries,NonTapped Entries,SUM([NonTapped Entries])/COUNTD([Date]),Tap Entries' \
+            '2023,2023-01-17,Tuesday,,Weekday,GALLERY PL-CHINATOWN,AM Peak,80,,2,,80' \
+            '2023,2023-01-17,Tuesday,,Weekday,GALLERY PL-CHINATOWN,Midday,72,,3,,72' \
+            '2023,2023-01-17,Tuesday,,Weekday,GALLERY PL-CHINATOWN,PM Peak,100,,2,,100' \
+            '2023,2023-01-17,Tuesday,,Weekday,GALLERY PL-CHINATOWN,Evening,50,,1,,50' \
+            '2023,2023-01-14,Saturday,,Saturday,UNION STATION,AM Peak,45,,1,,45' \
+            '2023,2023-01-14,Saturday,,Saturday,UNION STATION,PM Peak,62,,1,,62' \
+            > data_raw/ridership_2023.csv
 
+          # ---- 2024 (SPLIT: tapped)
           printf '%s\n' \
-            'Station,Year,Month,Time_Period,Day_Type,Entries' \
-            'GALLERY PL-CHINATOWN,2023,1,AM,Weekday,3' \
-            'GALLERY PL-CHINATOWN,2023,1,Midday,Weekday,2' \
-            'UNION STATION,2023,1,AM,Weekday,4' \
-            'UNION STATION,2023,1,PM,Weekday,3' \
-            'GALLERY PL-CHINATOWN,2023,1,AM,Weekend,1' \
-            'UNION STATION,2023,1,AM,Weekend,2' \
-            > data_raw/ridership_2023_nontapped.csv
+            'Year of Date,Date,Day of Week,Holiday,Service Type,Station Name,Time Period,Avg Daily Tapped Entries,Entries,NonTapped Entries,SUM([NonTapped Entries])/COUNTD([Date]),Tap Entries' \
+            '2024,2024-01-16,Tuesday,,Weekday,GALLERY PL-CHINATOWN,AM Peak,85,,,' \
+            '2024,2024-01-16,Tuesday,,Weekday,GALLERY PL-CHINATOWN,Midday,78,,,' \
+            '2024,2024-01-16,Tuesday,,Weekday,GALLERY PL-CHINATOWN,PM Peak,102,,,' \
+            '2024,2024-01-16,Tuesday,,Weekday,GALLERY PL-CHINATOWN,Evening,52,,,' \
+            '2024,2024-01-13,Saturday,,Saturday,UNION STATION,AM Peak,47,,,' \
+            '2024,2024-01-13,Saturday,,Saturday,UNION STATION,PM Peak,63,,,' \
+            > data_raw/ridership_2024_tapped.csv
 
-          # One-line GeoJSON (avoids YAML parser confusion with colons)
+          # ---- 2024 (SPLIT: non-tapped)
+          printf '%s\n' \
+            'Year of Date,Date,Day of Week,Holiday,Service Type,Station Name,Time Period,Avg Daily Tapped Entries,Entries,NonTapped Entries,SUM([NonTapped Entries])/COUNTD([Date]),Tap Entries' \
+            '2024,2024-01-16,Tuesday,,Weekday,GALLERY PL-CHINATOWN,AM Peak,, ,2,,' \
+            '2024,2024-01-16,Tuesday,,Weekday,GALLERY PL-CHINATOWN,Midday,, ,2,,' \
+            '2024,2024-01-16,Tuesday,,Weekday,GALLERY PL-CHINATOWN,PM Peak,, ,3,,' \
+            '2024,2024-01-16,Tuesday,,Weekday,GALLERY PL-CHINATOWN,Evening,, ,1,,' \
+            '2024,2024-01-13,Saturday,,Saturday,UNION STATION,AM Peak,, ,1,,' \
+            '2024,2024-01-13,Saturday,,Saturday,UNION STATION,PM Peak,, ,1,,' \
+            > data_raw/ridership_2024_nontapped.csv
+
+          # ---- 2025 (SPLIT: tapped)
+          printf '%s\n' \
+            'Year of Date,Date,Day of Week,Holiday,Service Type,Station Name,Time Period,Avg Daily Tapped Entries,Entries,NonTapped Entries,SUM([NonTapped Entries])/COUNTD([Date]),Tap Entries' \
+            '2025,2025-01-20,Monday,,Weekday,GALLERY PL-CHINATOWN,AM Peak,88,,,' \
+            '2025,2025-01-20,Monday,,Weekday,GALLERY PL-CHINATOWN,Midday,79,,,' \
+            '2025,2025-01-20,Monday,,Weekday,GALLERY PL-CHINATOWN,PM Peak,105,,,' \
+            '2025,2025-01-20,Monday,,Weekday,GALLERY PL-CHINATOWN,Evening,54,,,' \
+            '2025,2025-01-18,Saturday,,Saturday,UNION STATION,AM Peak,49,,,' \
+            '2025,2025-01-18,Saturday,,Saturday,UNION STATION,PM Peak,65,,,' \
+            > data_raw/ridership_2025_tapped.csv
+
+          # ---- 2025 (SPLIT: non-tapped)
+          printf '%s\n' \
+            'Year of Date,Date,Day of Week,Holiday,Service Type,Station Name,Time Period,Avg Daily Tapped Entries,Entries,NonTapped Entries,SUM([NonTapped Entries])/COUNTD([Date]),Tap Entries' \
+            '2025,2025-01-20,Monday,,Weekday,GALLERY PL-CHINATOWN,AM Peak,,,2,,' \
+            '2025,2025-01-20,Monday,,Weekday,GALLERY PL-CHINATOWN,Midday,,,2,,' \
+            '2025,2025-01-20,Monday,,Weekday,GALLERY PL-CHINATOWN,PM Peak,,,3,,' \
+            '2025,2025-01-20,Monday,,Weekday,GALLERY PL-CHINATOWN,Evening,,,1,,' \
+            '2025,2025-01-18,Saturday,,Saturday,UNION STATION,AM Peak,,,1,,' \
+            '2025,2025-01-18,Saturday,,Saturday,UNION STATION,PM Peak,,,1,,' \
+            > data_raw/ridership_2025_nontapped.csv
+
+          # Minimal stations GeoJSON
           echo '{"type":"FeatureCollection","name":"metro_stations","crs":{"type":"name","properties":{"name":"EPSG:4326"}},"features":[{"type":"Feature","properties":{"NAME":"GALLERY PL-CHINATOWN"},"geometry":{"type":"Point","coordinates":[-77.0219,38.8983]}},{"type":"Feature","properties":{"NAME":"UNION STATION"},"geometry":{"type":"Point","coordinates":[-77.0075,38.8971]}}]}' > data_geo/metro_stations.geojson
 
-      # Simulate Tableau "Download → Data → CSV" (UTF-16LE comma CSV)
-      - name: Convert CSVs to UTF-16LE
+      - name: Convert fixture CSVs to UTF-16LE (simulate Tableau Download→Data)
         run: |
           set -e
           for f in data_raw/*.csv; do
@@ -103,7 +137,7 @@ jobs:
           set -e
           python analysis/01_clean_data.py
 
-      - name: Verify schema
+      - name: Verify schema of cleaned CSV
         run: |
           set -e
           python -c "import pandas as pd; df=pd.read_csv('data_clean/station_monthly_recovery.csv'); exp={'Station','Year','Month','Time_Period','Day_Type','Entries','Entries_2019','Recovery_Ratio','Denom_Flag'}; missing=exp-set(df.columns); assert not missing, 'Missing columns: %s' % (missing,); assert len(df)>0, 'Empty CSV'; print('Schema OK, rows=', len(df))"
@@ -111,7 +145,6 @@ jobs:
       - name: Run 02_inference_tests.py
         run: |
           set -e
-          # Keep tolerant for fixtures; flip to strict once your test data produces a stable JSON
           python analysis/02_inference_tests.py || true
 
       - name: Verify inference JSON (tolerant)
@@ -124,10 +157,10 @@ jobs:
           set -e
           python analysis/03_tableau_export.py
 
-      - name: Verify Tableau export
+      - name: Verify Tableau export geometry
         run: |
           set -e
-          python -c "import pandas as pd; df=pd.read_csv('data_clean/tableau_recovery.csv'); assert {'Longitude','Latitude'}.issubset(df.columns), 'Missing geometry'; cov=float(df[['Longitude','Latitude']].notna().mean().mean()); assert cov>0.5, 'Low geometry coverage: %.2f' % cov; print('Tableau export OK, rows=', len(df))"
+          python -c "import pandas as pd, pathlib as pl; p=pl.Path('data_clean/tableau_recovery.csv'); df=pd.read_csv(p); assert {'Longitude','Latitude'}.issubset(df.columns), 'Missing geometry columns'; cov=float(df[['Longitude','Latitude']].notna().mean().mean()); print('Geometry coverage:', cov); assert cov>0.5, 'Low geometry coverage: %.2f' % cov; print('Tableau export OK, rows=', len(df))"
 
       - name: Run pytest
         run: |
