@@ -23,84 +23,81 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          # Install your project requirements (edit if your file name differs)
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-          # Ensure fast GeoJSON IO without GDAL headaches
-          pip install pyogrio
-          # Safety: if your requirements didn't include these explicitly
-          pip install geopandas shapely pyproj
+          pip install pandas openpyxl pyogrio geopandas shapely pyproj
 
       - name: Create fixture data (ridership + DC stations)
         run: |
+          set -e
           mkdir -p data_raw data_geo results/tables data_clean
 
           # 2019 baseline (monthly, per station, per period/daytype)
-          cat > data_raw/ridership_2019.csv << 'EOF'
-          Station,Year,Month,Time_Period,Day_Type,Entries
-          GALLERY PL-CHINATOWN,2019,1,AM,Weekday,100
-          GALLERY PL-CHINATOWN,2019,1,Midday,Weekday,80
-          GALLERY PL-CHINATOWN,2019,1,PM,Weekday,120
-          GALLERY PL-CHINATOWN,2019,1,Evening,Weekday,60
-          UNION STATION,2019,1,AM,Weekday,150
-          UNION STATION,2019,1,Midday,Weekday,90
-          UNION STATION,2019,1,PM,Weekday,130
-          UNION STATION,2019,1,Evening,Weekday,70
-          GALLERY PL-CHINATOWN,2019,1,AM,Weekend,40
-          UNION STATION,2019,1,AM,Weekend,50
-          EOF
+          printf '%s\n' \
+            'Station,Year,Month,Time_Period,Day_Type,Entries' \
+            'GALLERY PL-CHINATOWN,2019,1,AM,Weekday,100' \
+            'GALLERY PL-CHINATOWN,2019,1,Midday,Weekday,80' \
+            'GALLERY PL-CHINATOWN,2019,1,PM,Weekday,120' \
+            'GALLERY PL-CHINATOWN,2019,1,Evening,Weekday,60' \
+            'UNION STATION,2019,1,AM,Weekday,150' \
+            'UNION STATION,2019,1,Midday,Weekday,90' \
+            'UNION STATION,2019,1,PM,Weekday,130' \
+            'UNION STATION,2019,1,Evening,Weekday,70' \
+            'GALLERY PL-CHINATOWN,2019,1,AM,Weekend,40' \
+            'UNION STATION,2019,1,AM,Weekend,50' \
+            > data_raw/ridership_2019.csv
 
           # 2023 split files: tapped and non-tapped (same schema: Entries column)
-          cat > data_raw/ridership_2023_tapped.csv << 'EOF'
-          Station,Year,Month,Time_Period,Day_Type,Entries
-          GALLERY PL-CHINATOWN,2023,1,AM,Weekday,82
-          GALLERY PL-CHINATOWN,2023,1,Midday,Weekday,75
-          UNION STATION,2023,1,AM,Weekday,140
-          UNION STATION,2023,1,PM,Weekday,110
-          GALLERY PL-CHINATOWN,2023,1,AM,Weekend,35
-          UNION STATION,2023,1,AM,Weekend,45
-          EOF
+          printf '%s\n' \
+            'Station,Year,Month,Time_Period,Day_Type,Entries' \
+            'GALLERY PL-CHINATOWN,2023,1,AM,Weekday,82' \
+            'GALLERY PL-CHINATOWN,2023,1,Midday,Weekday,75' \
+            'UNION STATION,2023,1,AM,Weekday,140' \
+            'UNION STATION,2023,1,PM,Weekday,110' \
+            'GALLERY PL-CHINATOWN,2023,1,AM,Weekend,35' \
+            'UNION STATION,2023,1,AM,Weekend,45' \
+            > data_raw/ridership_2023_tapped.csv
 
-          cat > data_raw/ridership_2023_nontapped.csv << 'EOF'
-          Station,Year,Month,Time_Period,Day_Type,Entries
-          GALLERY PL-CHINATOWN,2023,1,AM,Weekday,3
-          GALLERY PL-CHINATOWN,2023,1,Midday,Weekday,2
-          UNION STATION,2023,1,AM,Weekday,4
-          UNION STATION,2023,1,PM,Weekday,3
-          GALLERY PL-CHINATOWN,2023,1,AM,Weekend,1
-          UNION STATION,2023,1,AM,Weekend,2
-          EOF
+          printf '%s\n' \
+            'Station,Year,Month,Time_Period,Day_Type,Entries' \
+            'GALLERY PL-CHINATOWN,2023,1,AM,Weekday,3' \
+            'GALLERY PL-CHINATOWN,2023,1,Midday,Weekday,2' \
+            'UNION STATION,2023,1,AM,Weekday,4' \
+            'UNION STATION,2023,1,PM,Weekday,3' \
+            'GALLERY PL-CHINATOWN,2023,1,AM,Weekend,1' \
+            'UNION STATION,2023,1,AM,Weekend,2' \
+            > data_raw/ridership_2023_nontapped.csv
 
           # Minimal GeoJSON for DC stations (NAME attribute expected by script)
-          cat > data_geo/metro_stations.geojson << 'EOF'
-          {
-            "type": "FeatureCollection",
-            "name": "metro_stations",
-            "crs": { "type": "name", "properties": { "name": "EPSG:4326" } },
-            "features": [
-              {
-                "type": "Feature",
-                "properties": { "NAME": "GALLERY PL-CHINATOWN" },
-                "geometry": { "type": "Point", "coordinates": [ -77.0219, 38.8983 ] }
-              },
-              {
-                "type": "Feature",
-                "properties": { "NAME": "UNION STATION" },
-                "geometry": { "type": "Point", "coordinates": [ -77.0075, 38.8971 ] }
-              }
-            ]
-          }
-          EOF
+          printf '%s\n' \
+            '{' \
+            '  "type": "FeatureCollection",' \
+            '  "name": "metro_stations",' \
+            '  "crs": { "type": "name", "properties": { "name": "EPSG:4326" } },' \
+            '  "features": [' \
+            '    {' \
+            '      "type": "Feature",' \
+            '      "properties": { "NAME": "GALLERY PL-CHINATOWN" },' \
+            '      "geometry": { "type": "Point", "coordinates": [ -77.0219, 38.8983 ] }' \
+            '    },' \
+            '    {' \
+            '      "type": "Feature",' \
+            '      "properties": { "NAME": "UNION STATION" },' \
+            '      "geometry": { "type": "Point", "coordinates": [ -77.0075, 38.8971 ] }' \
+            '    }' \
+            '  ]' \
+            '}' \
+            > data_geo/metro_stations.geojson
 
-                  - name: Convert fixture CSVs to Tableau-style UTF-16LE CSVs
-                    run: |
-                    set -e
-                    for f in data_raw/*.csv; do
-                      [ -f "$f" ] || continue
-                      # Re-encode UTF-8 -> UTF-16LE while keeping commas
-                      iconv -f UTF-8 -t UTF-16LE "$f" > "${f}.utf16le"
-                      mv "${f}.utf16le" "$f"
-                      echo "Re-encoded $f to UTF-16LE"
-                    done
+      # Re-encode fixtures to Tableau-style UTF-16LE comma CSV (Download → Data → CSV)
+      - name: Convert fixture CSVs to UTF-16LE (comma CSV)
+        run: |
+          set -e
+          for f in data_raw/*.csv; do
+            [ -f "$f" ] || continue
+            iconv -f UTF-8 -t UTF-16LE "$f" > "${f}.utf16le"
+            mv "${f}.utf16le" "$f"
+            echo "Re-encoded $f to UTF-16LE"
+          done
 
       - name: Run 01_clean_data.py
         run: |
@@ -110,12 +107,12 @@ jobs:
         run: |
           ls -lah data_clean || true
           ls -lah results/tables || true
-          python - << 'PY'
-          import json
-          from pathlib import Path
-          p = Path("results/tables/clean_log.json")
-          print(p.read_text() if p.exists() else "clean_log.json not found")
-          PY
+          python - <<'PY'
+import json
+from pathlib import Path
+p = Path("results/tables/clean_log.json")
+print(p.read_text() if p.exists() else "clean_log.json not found")
+PY
 
       - name: Run 02_inference_tests.py
         run: |
@@ -123,12 +120,12 @@ jobs:
 
       - name: Show inference outputs
         run: |
-          python - << 'PY'
-          import json
-          from pathlib import Path
-          p = Path("results/tables/stats_summary.json")
-          print(p.read_text() if p.exists() else "stats_summary.json not found")
-          PY
+          python - <<'PY'
+import json
+from pathlib import Path
+p = Path("results/tables/stats_summary.json")
+print(p.read_text() if p.exists() else "stats_summary.json not found")
+PY
 
       - name: Run 03_tableau_export.py
         run: |
