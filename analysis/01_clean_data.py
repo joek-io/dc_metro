@@ -47,7 +47,7 @@ def load_single_csv(path, default_year=None):
     df = pd.read_csv(path)
     df = standardize_columns(df)
 
-    # Derive Year/Month from Date if needed
+    # Get Year/Month from Date if not found
     if ("Year" not in df.columns) or ("Month" not in df.columns):
         if "Date" in df.columns:
             dt = pd.to_datetime(df["Date"], errors="coerce")
@@ -58,7 +58,7 @@ def load_single_csv(path, default_year=None):
         elif (default_year is not None) and ("Year" not in df.columns):
             df["Year"] = default_year
 
-    # Ensure required columns exist
+    # Ensure columns exist
     for col in ["Station","Year","Month","Time_Period","Day_Type"]:
         if col not in df.columns:
             if col in ("Time_Period","Day_Type"):
@@ -75,7 +75,7 @@ def load_single_csv(path, default_year=None):
             elif col == "Year":
                 df["Year"] = default_year if default_year else 2019
 
-    # Compute Entries from tapped/non-tapped if necessary
+    # Combine Entries from tapped/non-tapped for post 2019 data
     tapped = df["Average_Daily_Tapped_Entries"] if "Average_Daily_Tapped_Entries" in df.columns else None
     nontap = df["Average_Daily_Non_Tapped_Entries"] if "Average_Daily_Non_Tapped_Entries" in df.columns else None
 
