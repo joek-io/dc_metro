@@ -85,4 +85,4 @@ import json
 with open(os.path.join(OUT_DIR, "stats_summary.json"), "w") as f:
     json.dump(results, f, indent=2)
 
-print("✅ Inference finished. See results/tables/ for outputs.")
+print("Inference script finished. See results/tables/ for outputs.")
