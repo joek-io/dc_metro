@@ -168,12 +168,12 @@ def load_wmata_tableau(p: Path, default_year: int, log: dict) -> pd.DataFrame:
 
     df["Day_Type"] = [derive_day_type(st, dow) for st, dow in zip(df["Service Type"], df["Day of Week"])]
 
+    # ---- TAPPED-ONLY ENTRIES (consistent metric across years) ----
     tapped = pd.to_numeric(df["Avg Daily Tapped Entries"], errors="coerce")
-    nontap = pd.to_numeric(df["NonTapped Entries"], errors="coerce")
     alt_entries = pd.to_numeric(df["Entries"], errors="coerce")
-    entries = tapped.fillna(0) + nontap.fillna(0)
-    entries = np.where(entries > 0, entries, alt_entries.fillna(0))
-    df["Entries"] = entries
+    # Prefer tapped; fallback to Entries only when tapped is missing
+    entries = tapped.where(tapped.notna(), other=alt_entries)
+    df["Entries"] = entries.fillna(0)
 
     keep = ["Station", "Year", "Month", "Time_Period", "Day_Type", "Entries"]
     df = df[keep].copy()
@@ -253,65 +253,87 @@ def main():
 
     df = df.groupby(["Station", "Year", "Month", "Time_Period", "Day_Type"], as_index=False)["Entries"].sum()
 
-    # Dual baselines (period + station) with fallback
+    # ---- DAY-TYPE + TIME-PERIOD 2019 BASELINE WITH FALLBACKS ----
     MIN_BASELINE_COUNT = 1  # keep at 1 per your test
 
-    # Period baseline (Station × Time_Period)
-    base_raw = df[df["Year"] == 2019].groupby(["Station", "Time_Period"])["Entries"]
-    base_period = base_raw.agg(Entries_2019="mean", n_2019="count").reset_index()
-    base_period.loc[base_period["n_2019"] < MIN_BASELINE_COUNT, "Entries_2019"] = np.nan
-    base_period = base_period.drop(columns=["n_2019"])
+    # Most specific: Station × Day_Type × Time_Period
+    base_sdtp = (
+        df[df["Year"] == 2019]
+        .groupby(["Station", "Day_Type", "Time_Period"])["Entries"]
+        .agg(Entries_2019_sdtp="mean", n_sdtp="count")
+        .reset_index()
+    )
+    base_sdtp.loc[base_sdtp["n_sdtp"] < MIN_BASELINE_COUNT, "Entries_2019_sdtp"] = np.nan
+    base_sdtp = base_sdtp.drop(columns=["n_sdtp"])
 
-    # Station baseline (Station)
-    base_station_raw = df[df["Year"] == 2019].groupby(["Station"])["Entries"]
-    base_station = base_station_raw.agg(Entries_2019_station="mean", n_2019_station="count").reset_index()
-    base_station.loc[base_station["n_2019_station"] < MIN_BASELINE_COUNT, "Entries_2019_station"] = np.nan
-    base_station = base_station.drop(columns=["n_2019_station"])
+    # Station × Day_Type
+    base_sd = (
+        df[df["Year"] == 2019]
+        .groupby(["Station", "Day_Type"])["Entries"]
+        .agg(Entries_2019_sd="mean", n_sd="count")
+        .reset_index()
+    )
+    base_sd.loc[base_sd["n_sd"] < MIN_BASELINE_COUNT, "Entries_2019_sd"] = np.nan
+    base_sd = base_sd.drop(columns=["n_sd"])
 
-    # Join baselines
-    merged = df.merge(base_period, on=["Station", "Time_Period"], how="left")
-    merged = merged.merge(base_station, on="Station", how="left")
+    # Station × Time_Period
+    base_sp = (
+        df[df["Year"] == 2019]
+        .groupby(["Station", "Time_Period"])["Entries"]
+        .agg(Entries_2019_sp="mean", n_sp="count")
+        .reset_index()
+    )
+    base_sp.loc[base_sp["n_sp"] < MIN_BASELINE_COUNT, "Entries_2019_sp"] = np.nan
+    base_sp = base_sp.drop(columns=["n_sp"])
 
-    # Preferred period baseline; fallback to station baseline when missing
-    merged["Entries_2019_final"] = merged["Entries_2019"]
-    need_fallback = merged["Entries_2019_final"].isna() | (merged["Entries_2019_final"] == 0)
-    merged.loc[need_fallback, "Entries_2019_final"] = merged.loc[need_fallback, "Entries_2019_station"]
+    # Station-only
+    base_s = (
+        df[df["Year"] == 2019]
+        .groupby(["Station"])["Entries"]
+        .agg(Entries_2019_s="mean", n_s="count")
+        .reset_index()
+    )
+    base_s.loc[base_s["n_s"] < MIN_BASELINE_COUNT, "Entries_2019_s"] = np.nan
+    base_s = base_s.drop(columns=["n_s"])
 
-    # Flags and ratios (keep original + station + final)
-    merged["Denom_Flag_Period"] = merged["Entries_2019"].isna() | (merged["Entries_2019"] == 0)
-    merged["Denom_Flag_Station"] = merged["Entries_2019_station"].isna() | (merged["Entries_2019_station"] == 0)
+    # Join all baselines
+    merged = df.merge(base_sdtp, on=["Station", "Day_Type", "Time_Period"], how="left")
+    merged = merged.merge(base_sd, on=["Station", "Day_Type"], how="left")
+    merged = merged.merge(base_sp, on=["Station", "Time_Period"], how="left")
+    merged = merged.merge(base_s, on=["Station"], how="left")
+
+    # Choose best available baseline in order SDTP -> SD -> SP -> S
+    merged["Entries_2019_final"] = merged["Entries_2019_sdtp"]
+    for col in ["Entries_2019_sd", "Entries_2019_sp", "Entries_2019_s"]:
+        need = merged["Entries_2019_final"].isna() | (merged["Entries_2019_final"] == 0)
+        merged.loc[need, "Entries_2019_final"] = merged.loc[need, col]
+
+    # Flags and ratios
     merged["Denom_Flag"] = merged["Entries_2019_final"].isna() | (merged["Entries_2019_final"] == 0)
-
-    merged["Recovery_Ratio_Period"] = np.where(
-        merged["Denom_Flag_Period"], np.nan, merged["Entries"] / merged["Entries_2019"]
-    )
-    merged["Recovery_Ratio_Station"] = np.where(
-        merged["Denom_Flag_Station"], np.nan, merged["Entries"] / merged["Entries_2019_station"]
-    )
-    merged["Recovery_Ratio_Final"] = np.where(
+    merged["Recovery_Ratio"] = np.where(
         merged["Denom_Flag"], np.nan, merged["Entries"] / merged["Entries_2019_final"]
     )
 
-    # Log how many rows used fallback
-    used_fallback = int(need_fallback.sum())
-    log.setdefault("notes", []).append(f"Applied station baseline fallback to {used_fallback} rows.")
+    # Light winsorization to tame extreme ratios
+    cap = 5.0
+    rr_before_clip = merged["Recovery_Ratio"].copy()
+    merged["Recovery_Ratio"] = merged["Recovery_Ratio"].clip(upper=cap)
+    clipped = int((rr_before_clip > cap).sum(skipna=True))
+    if clipped > 0:
+        log.setdefault("notes", []).append(f"Winsorized {clipped} Recovery_Ratio values to cap={cap}.")
 
-    # Post-merge coverage on usable Recovery_Ratio_Final 
-    valid_rr = merged[~merged["Recovery_Ratio_Final"].isna()]
-    rr_counts_by_daytype = valid_rr["Day_Type"].value_counts(dropna=False).to_dict()
-    rr_counts_by_period = valid_rr["Time_Period"].value_counts(dropna=False).to_dict()
-    log.setdefault("postmerge_recovery_coverage", {})["by_day_type"] = {str(k): int(v) for k, v in rr_counts_by_daytype.items()}
-    log.setdefault("postmerge_recovery_coverage", {})["by_time_period"] = {str(k): int(v) for k, v in rr_counts_by_period.items()}
+    # Output-friendly column names
+    merged = merged.rename(columns={"Entries_2019_final": "Entries_2019"})
 
     merged = merged.sort_values(["Station", "Year", "Month", "Time_Period", "Day_Type"]).reset_index(drop=True)
     merged.to_csv(OUT_CSV, index=False)
 
-    # Export missing baselines for review (using final denominator flag)
+    # Export missing baselines for review
     missing_base = merged[merged["Denom_Flag"]].copy()
     if not missing_base.empty:
         diag_dir = LOG_DIR / "diagnostics"
         diag_dir.mkdir(parents=True, exist_ok=True)
-        missing_base.sort_values(["Station", "Time_Period", "Year", "Month"]).to_csv(
+        missing_base.sort_values(["Station", "Time_Period", "Day_Type", "Year", "Month"]).to_csv(
             diag_dir / "missing_2019_baseline.csv", index=False
         )
 
@@ -319,7 +341,7 @@ def main():
         "rows_written": int(len(merged)),
         "unique_stations": int(merged["Station"].nunique()),
         "denom_missing": int(merged["Denom_Flag"].sum()),
-        "recovery_nan": int(merged["Recovery_Ratio_Final"].isna().sum()),
+        "recovery_nan": int(merged["Recovery_Ratio"].isna().sum()),
     }
     with open(LOG_JSON, "w") as f:
         json.dump({"summary": summary, **log}, f, indent=2)
