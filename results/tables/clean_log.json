@@ -1,0 +1,345 @@
+{
+  "summary": {
+    "rows_written": 27238,
+    "unique_stations": 98,
+    "denom_missing": 1542,
+    "recovery_nan": 1542
+  },
+  "notes": [
+    "Winsorized 1559 Recovery_Ratio values to cap=5.0."
+  ],
+  "files_read": [
+    {
+      "path": "data_raw/ridership_2019.csv",
+      "rows": 519755,
+      "cols": [
+        "Year of Date",
+        "Date",
+        "Day of Week",
+        "Holiday",
+        "Service Type",
+        "Station Name",
+        "Time Period",
+        "Avg Daily Tapped Entries",
+        "Entries",
+        "NonTapped Entries",
+        "SUM([NonTapped Entries])/COUNTD([Date])",
+        "Tap Entries"
+      ]
+    },
+    {
+      "path": "data_raw/ridership_2023_tapped.csv",
+      "rows": 591395,
+      "cols": [
+        "Year of Date",
+        "Date",
+        "Day of Week",
+        "Holiday",
+        "Service Type",
+        "Station Name",
+        "Time Period",
+        "Avg Daily Tapped Entries",
+        "Entries",
+        "NonTapped Entries",
+        "SUM([NonTapped Entries])/COUNTD([Date])",
+        "Tap Entries"
+      ]
+    },
+    {
+      "path": "data_raw/ridership_2023_nontapped.csv",
+      "rows": 591395,
+      "cols": [
+        "Year of Date",
+        "Date",
+        "Day of Week",
+        "Holiday",
+        "Service Type",
+        "Station Name",
+        "Time Period",
+        "Avg Daily Tapped Entries",
+        "Entries",
+        "NonTapped Entries",
+        "SUM([NonTapped Entries])/COUNTD([Date])",
+        "Tap Entries"
+      ]
+    },
+    {
+      "path": "data_raw/ridership_2024_tapped.csv",
+      "rows": 598480,
+      "cols": [
+        "Year of Date",
+        "Date",
+        "Day of Week",
+        "Holiday",
+        "Service Type",
+        "Station Name",
+        "Time Period",
+        "Avg Daily Tapped Entries",
+        "Entries",
+        "NonTapped Entries",
+        "SUM([NonTapped Entries])/COUNTD([Date])",
+        "Tap Entries"
+      ]
+    },
+    {
+      "path": "data_raw/ridership_2024_nontapped.csv",
+      "rows": 598480,
+      "cols": [
+        "Year of Date",
+        "Date",
+        "Day of Week",
+        "Holiday",
+        "Service Type",
+        "Station Name",
+        "Time Period",
+        "Avg Daily Tapped Entries",
+        "Entries",
+        "NonTapped Entries",
+        "SUM([NonTapped Entries])/COUNTD([Date])",
+        "Tap Entries"
+      ]
+    },
+    {
+      "path": "data_raw/ridership_2025_tapped.csv",
+      "rows": 463249,
+      "cols": [
+        "Year of Date",
+        "Date",
+        "Day of Week",
+        "Holiday",
+        "Service Type",
+        "Station Name",
+        "Time Period",
+        "Avg Daily Tapped Entries",
+        "Entries",
+        "NonTapped Entries",
+        "SUM([NonTapped Entries])/COUNTD([Date])",
+        "Tap Entries"
+      ]
+    },
+    {
+      "path": "data_raw/ridership_2025_nontapped.csv",
+      "rows": 463249,
+      "cols": [
+        "Year of Date",
+        "Date",
+        "Day of Week",
+        "Holiday",
+        "Service Type",
+        "Station Name",
+        "Time Period",
+        "Avg Daily Tapped Entries",
+        "Entries",
+        "NonTapped Entries",
+        "SUM([NonTapped Entries])/COUNTD([Date])",
+        "Tap Entries"
+      ]
+    }
+  ],
+  "warnings": [],
+  "time_period_observed": {
+    "data_raw/ridership_2019.csv": {
+      "original_unique": [
+        "AM PEAK (OPEN-9:30AM)",
+        "EVENING (7PM-12AM)",
+        "LATE NIGHT (12AM-CLOSE)",
+        "MIDDAY (9:30AM-3PM)",
+        "PM PEAK (3PM-7PM)"
+      ],
+      "mapped_unique": [
+        "AM",
+        "EVENING",
+        "MIDDAY",
+        "PM"
+      ]
+    },
+    "data_raw/ridership_2023_tapped.csv": {
+      "original_unique": [
+        "AM PEAK (OPEN-9:30AM)",
+        "EVENING (7PM-12AM)",
+        "LATE NIGHT (12AM-CLOSE)",
+        "MIDDAY (9:30AM-3PM)",
+        "PM PEAK (3PM-7PM)"
+      ],
+      "mapped_unique": [
+        "AM",
+        "EVENING",
+        "MIDDAY",
+        "PM"
+      ]
+    },
+    "data_raw/ridership_2023_nontapped.csv": {
+      "original_unique": [
+        "AM PEAK (OPEN-9:30AM)",
+        "EVENING (7PM-12AM)",
+        "LATE NIGHT (12AM-CLOSE)",
+        "MIDDAY (9:30AM-3PM)",
+        "PM PEAK (3PM-7PM)"
+      ],
+      "mapped_unique": [
+        "AM",
+        "EVENING",
+        "MIDDAY",
+        "PM"
+      ]
+    },
+    "data_raw/ridership_2024_tapped.csv": {
+      "original_unique": [
+        "AM PEAK (OPEN-9:30AM)",
+        "EVENING (7PM-12AM)",
+        "LATE NIGHT (12AM-CLOSE)",
+        "MIDDAY (9:30AM-3PM)",
+        "PM PEAK (3PM-7PM)"
+      ],
+      "mapped_unique": [
+        "AM",
+        "EVENING",
+        "MIDDAY",
+        "PM"
+      ]
+    },
+    "data_raw/ridership_2024_nontapped.csv": {
+      "original_unique": [
+        "AM PEAK (OPEN-9:30AM)",
+        "EVENING (7PM-12AM)",
+        "LATE NIGHT (12AM-CLOSE)",
+        "MIDDAY (9:30AM-3PM)",
+        "PM PEAK (3PM-7PM)"
+      ],
+      "mapped_unique": [
+        "AM",
+        "EVENING",
+        "MIDDAY",
+        "PM"
+      ]
+    },
+    "data_raw/ridership_2025_tapped.csv": {
+      "original_unique": [
+        "AM PEAK (OPEN-9:30AM)",
+        "EVENING (7PM-12AM)",
+        "LATE NIGHT (12AM-CLOSE)",
+        "MIDDAY (9:30AM-3PM)",
+        "PM PEAK (3PM-7PM)"
+      ],
+      "mapped_unique": [
+        "AM",
+        "EVENING",
+        "MIDDAY",
+        "PM"
+      ]
+    },
+    "data_raw/ridership_2025_nontapped.csv": {
+      "original_unique": [
+        "AM PEAK (OPEN-9:30AM)",
+        "EVENING (7PM-12AM)",
+        "LATE NIGHT (12AM-CLOSE)",
+        "MIDDAY (9:30AM-3PM)",
+        "PM PEAK (3PM-7PM)"
+      ],
+      "mapped_unique": [
+        "AM",
+        "EVENING",
+        "MIDDAY",
+        "PM"
+      ]
+    }
+  },
+  "coverage": {
+    "data_raw/ridership_2019.csv": {
+      "day_type_counts": {
+        "WEEKDAY": 511489,
+        "WEEKEND": 8266
+      },
+      "time_period_counts": {
+        "EVENING": 154681,
+        "MIDDAY": 139908,
+        "AM": 131952,
+        "PM": 93214
+      }
+    },
+    "data_raw/ridership_2023_tapped.csv": {
+      "day_type_counts": {
+        "WEEKDAY": 569732,
+        "WEEKEND": 21663
+      },
+      "time_period_counts": {
+        "EVENING": 190444,
+        "MIDDAY": 151581,
+        "AM": 148338,
+        "PM": 101032
+      }
+    },
+    "data_raw/ridership_2023_nontapped.csv": {
+      "day_type_counts": {
+        "WEEKDAY": 569732,
+        "WEEKEND": 21663
+      },
+      "time_period_counts": {
+        "EVENING": 190444,
+        "MIDDAY": 151581,
+        "AM": 148338,
+        "PM": 101032
+      }
+    },
+    "data_raw/ridership_2024_tapped.csv": {
+      "day_type_counts": {
+        "WEEKDAY": 579006,
+        "WEEKEND": 19474
+      },
+      "time_period_counts": {
+        "EVENING": 192902,
+        "MIDDAY": 153291,
+        "AM": 150113,
+        "PM": 102174
+      }
+    },
+    "data_raw/ridership_2024_nontapped.csv": {
+      "day_type_counts": {
+        "WEEKDAY": 579006,
+        "WEEKEND": 19474
+      },
+      "time_period_counts": {
+        "EVENING": 192902,
+        "MIDDAY": 153291,
+        "AM": 150113,
+        "PM": 102174
+      }
+    },
+    "data_raw/ridership_2025_tapped.csv": {
+      "day_type_counts": {
+        "WEEKDAY": 450092,
+        "WEEKEND": 13157
+      },
+      "time_period_counts": {
+        "EVENING": 150201,
+        "MIDDAY": 117848,
+        "AM": 116656,
+        "PM": 78544
+      }
+    },
+    "data_raw/ridership_2025_nontapped.csv": {
+      "day_type_counts": {
+        "WEEKDAY": 450092,
+        "WEEKEND": 13157
+      },
+      "time_period_counts": {
+        "EVENING": 150201,
+        "MIDDAY": 117848,
+        "AM": 116656,
+        "PM": 78544
+      }
+    }
+  },
+  "global_coverage": {
+    "Time_Period": {
+      "EVENING": 159961,
+      "MIDDAY": 145189,
+      "AM": 137231,
+      "PM": 98493
+    },
+    "Day_Type": {
+      "WEEKDAY": 524796,
+      "WEEKEND": 16078
+    }
+  }
+}

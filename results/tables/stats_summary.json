@@ -1,0 +1,51 @@
+{
+  "weekend_vs_weekday": {
+    "test": "Paired t-test",
+    "stations_n": 91,
+    "weekend_mean": 1.5145838930777324,
+    "weekday_mean": 1.107090829587922,
+    "mean_diff": 0.4074930634898107,
+    "p_value": 0.00013418346529153643,
+    "cohens_d": 0.4183187679534357
+  },
+  "time_of_day": {
+    "test": "Friedman",
+    "stations_n": 91,
+    "periods": [
+      "AM",
+      "MIDDAY",
+      "PM",
+      "EVENING"
+    ],
+    "p_value": 0.0015536631420005524
+  },
+  "mixedlm": {
+    "formula": "Log_Ratio ~ Day_Type * Time_Period + Day_Type * Year_centered + Time_Period * Year_centered",
+    "converged": true,
+    "n_obs": 12552,
+    "fixed_effects": {
+      "Intercept": -0.022524892465277033,
+      "Day_Type[T.Weekend]": 1.03793367888695,
+      "Time_Period[T.EVENING]": 0.11280767129153961,
+      "Time_Period[T.MIDDAY]": -0.025520791417349642,
+      "Time_Period[T.PM]": 0.15002968917415593,
+      "Day_Type[T.Weekend]:Time_Period[T.EVENING]": -0.032565343699976206,
+      "Day_Type[T.Weekend]:Time_Period[T.MIDDAY]": 0.03440713993805433,
+      "Day_Type[T.Weekend]:Time_Period[T.PM]": -0.1061243841637499,
+      "Year_centered": 0.35737250560685796,
+      "Day_Type[T.Weekend]:Year_centered": -0.3476499989367542,
+      "Time_Period[T.EVENING]:Year_centered": 0.20418993449057213,
+      "Time_Period[T.MIDDAY]:Year_centered": 0.15817745470672276,
+      "Time_Period[T.PM]:Year_centered": 0.09157967827599739,
+      "Group Var": 0.28841771458248755
+    },
+    "year_center_reference": 2024.0,
+    "weekend_year_interaction": -0.3476499989367542,
+    "time_period_year_interactions": {
+      "Time_Period[T.EVENING]:Year_centered": 0.20418993449057213,
+      "Time_Period[T.MIDDAY]:Year_centered": 0.15817745470672276,
+      "Time_Period[T.PM]:Year_centered": 0.09157967827599739
+    }
+  },
+  "status": "ok"
+}

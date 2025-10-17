@@ -1,0 +1,26 @@
+                        Mixed Linear Model Regression Results
+======================================================================================
+Model:                       MixedLM          Dependent Variable:          Log_Ratio  
+No. Observations:            12552            Method:                      REML       
+No. Groups:                  91               Scale:                       0.4697     
+Min. group size:             17               Log-Likelihood:              -13263.8677
+Max. group size:             212              Converged:                   Yes        
+Mean group size:             137.9                                                    
+--------------------------------------------------------------------------------------
+                                           Coef.  Std.Err.    z    P>|z| [0.025 0.975]
+--------------------------------------------------------------------------------------
+Intercept                                  -0.023    0.041  -0.554 0.580 -0.102  0.057
+Day_Type[T.Weekend]                         1.038    0.032  32.406 0.000  0.975  1.101
+Time_Period[T.EVENING]                      0.113    0.022   5.192 0.000  0.070  0.155
+Time_Period[T.MIDDAY]                      -0.026    0.019  -1.322 0.186 -0.063  0.012
+Time_Period[T.PM]                           0.150    0.019   7.979 0.000  0.113  0.187
+Day_Type[T.Weekend]:Time_Period[T.EVENING] -0.033    0.049  -0.659 0.510 -0.129  0.064
+Day_Type[T.Weekend]:Time_Period[T.MIDDAY]   0.034    0.041   0.836 0.403 -0.046  0.115
+Day_Type[T.Weekend]:Time_Period[T.PM]      -0.106    0.042  -2.548 0.011 -0.188 -0.024
+Year_centered                               0.357    0.015  24.108 0.000  0.328  0.386
+Day_Type[T.Weekend]:Year_centered          -0.348    0.018 -19.292 0.000 -0.383 -0.312
+Time_Period[T.EVENING]:Year_centered        0.204    0.023   8.774 0.000  0.159  0.250
+Time_Period[T.MIDDAY]:Year_centered         0.158    0.021   7.675 0.000  0.118  0.199
+Time_Period[T.PM]:Year_centered             0.092    0.020   4.491 0.000  0.052  0.132
+Group Var                                   0.135    0.031                            
+======================================================================================
