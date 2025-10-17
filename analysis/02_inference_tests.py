@@ -129,27 +129,42 @@ except Exception as e:
 try:
     m = df_curr.copy()
     m["Log_Ratio"] = np.where(m["Recovery_Ratio"] > 0, np.log(m["Recovery_Ratio"]), np.nan)
-    m = m.replace([np.inf, -np.inf], np.nan).dropna(subset=["Log_Ratio","Station","Year","Time_Period","Day_Type"])
-    m["Day_Type"] = m["Day_Type"].astype("category")
-    m["Time_Period"] = m["Time_Period"].astype("category")
+    m = m.replace([np.inf, -np.inf], np.nan).dropna(
+        subset=["Log_Ratio", "Station", "Year", "Time_Period", "Day_Type"]
+    )
 
-    # Center year for interpretability (2019 = 0)
-    m["Year_centered"] = m["Year"] - 2019
+    # Center year for interpretability (so Intercept ~ mid-year level)
+    year_center = float(np.nanmedian(m["Year"]))
+    m["Year_centered"] = m["Year"] - year_center
+
+    # Categorical encodings for fixed effects
+    m["Day_Type"] = m["Day_Type"].astype("category")      # expects "Weekday"/"Weekend"
+    m["Time_Period"] = m["Time_Period"].astype("category")  # AM/MIDDAY/PM/EVENING
 
     if len(m) >= 100:  # minimal size guard
-        formula = "Log_Ratio ~ Day_Type * Time_Period + Year_centered"
-
+        # Include: main effects + Day_Type×Time_Period + Day_Type×Year_centered
+        formula = "Log_Ratio ~ Day_Type * Time_Period + Day_Type * Year_centered"
         model = smf.mixedlm(formula, m, groups=m["Station"], missing="drop")
         fit = model.fit()
 
+        # Save the full textual summary for inspection
         with open(os.path.join(OUT_DIR, "mixedlm_summary.txt"), "w") as f:
             f.write(str(fit.summary()))
 
+        # Pull key coefficients into JSON
+        params = getattr(fit, "params", pd.Series(dtype=float))
+        weekend_slope = None
+        for k in params.index:
+            if "Day_Type[T.Weekend]:Year_centered" in k:
+                weekend_slope = float(params[k])
+
         results["mixedlm"] = {
             "formula": formula,
-            "converged": bool(fit.converged),
-            "n_obs": int(fit.nobs or len(m)),
-            "fixed_effects": {k: float(v) for k, v in fit.params.items()}
+            "converged": bool(getattr(fit, "converged", True)),
+            "n_obs": int(getattr(fit, "nobs", len(m))),
+            "fixed_effects": {k: float(v) for k, v in params.items()},
+            "year_center_reference": year_center,
+            "weekend_year_interaction": weekend_slope
         }
     else:
         results["mixedlm"] = {"note": "too few observations for mixed model"}
