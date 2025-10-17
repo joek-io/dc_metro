@@ -122,7 +122,7 @@ def _parse_date_series(s: pd.Series) -> pd.Series:
     if pd.api.types.is_numeric_dtype(s):
         return pd.to_datetime(s, origin="1899-12-30", unit="D", errors="coerce")
 
-    # Probe a few values to pick an explicit format when possible
+    # Probe a few values to pick an explicit format
     probe = next((str(v).strip() for v in s.dropna().head(50).tolist() if str(v).strip()), "")
 
     if re.match(r"^\d{4}-\d{2}-\d{2}$", probe):
@@ -168,7 +168,7 @@ def load_wmata_tableau(p: Path, default_year: int, log: dict) -> pd.DataFrame:
 
     df["Day_Type"] = [derive_day_type(st, dow) for st, dow in zip(df["Service Type"], df["Day of Week"])]
 
-    # ---- TAPPED-ONLY ENTRIES (consistent metric across years) ----
+    # TAPPED-ONLY ENTRIES
     tapped = pd.to_numeric(df["Avg Daily Tapped Entries"], errors="coerce")
     alt_entries = pd.to_numeric(df["Entries"], errors="coerce")
     # Prefer tapped; fallback to Entries only when tapped is missing
@@ -253,7 +253,7 @@ def main():
 
     df = df.groupby(["Station", "Year", "Month", "Time_Period", "Day_Type"], as_index=False)["Entries"].sum()
 
-    # ---- DAY-TYPE + TIME-PERIOD 2019 BASELINE WITH FALLBACKS ----
+    # DAY-TYPE + TIME-PERIOD 2019 BASELINE WITH FALLBACKS
     MIN_BASELINE_COUNT = 1  # keep at 1 per your test
 
     # Most specific: Station × Day_Type × Time_Period

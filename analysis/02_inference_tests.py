@@ -133,21 +133,26 @@ try:
     m["Day_Type"] = m["Day_Type"].astype("category")
     m["Time_Period"] = m["Time_Period"].astype("category")
 
-    # center Year to make intercept interpretable
+    # Center year for interpretability (2019 = 0)
     m["Year_centered"] = m["Year"] - 2019
 
     if len(m) >= 100:  # minimal size guard
-        model = smf.mixedlm("Log_Ratio ~ Day_Type + Time_Period + Year_centered", 
-                            m, groups=m["Station"], missing="drop")
+        formula = "Log_Ratio ~ Day_Type * Time_Period + Year_centered"
+
+        model = smf.mixedlm(formula, m, groups=m["Station"], missing="drop")
         fit = model.fit()
+
         with open(os.path.join(OUT_DIR, "mixedlm_summary.txt"), "w") as f:
             f.write(str(fit.summary()))
+
         results["mixedlm"] = {
-            "converged": bool(fit.converged), 
-            "n_obs": int(fit.nobs or len(m))
+            "formula": formula,
+            "converged": bool(fit.converged),
+            "n_obs": int(fit.nobs or len(m)),
+            "fixed_effects": {k: float(v) for k, v in fit.params.items()}
         }
     else:
-        results["mixedlm"] = {"note": "too few observations"}
+        results["mixedlm"] = {"note": "too few observations for mixed model"}
 except Exception as e:
     results["mixedlm"] = {"error": str(e)}
 
