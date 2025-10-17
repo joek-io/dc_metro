@@ -133,30 +133,36 @@ try:
         subset=["Log_Ratio", "Station", "Year", "Time_Period", "Day_Type"]
     )
 
-    # Center year for interpretability (so Intercept ~ mid-year level)
+    # Center Year for interpretability
     year_center = float(np.nanmedian(m["Year"]))
     m["Year_centered"] = m["Year"] - year_center
 
-    # Categorical encodings for fixed effects
-    m["Day_Type"] = m["Day_Type"].astype("category")      # expects "Weekday"/"Weekend"
+    # Categorical encodings
+    m["Day_Type"] = m["Day_Type"].astype("category")        # Weekday/Weekend
     m["Time_Period"] = m["Time_Period"].astype("category")  # AM/MIDDAY/PM/EVENING
 
     if len(m) >= 100:  # minimal size guard
-        # Include: main effects + Day_Type×Time_Period + Day_Type×Year_centered
-        formula = "Log_Ratio ~ Day_Type * Time_Period + Day_Type * Year_centered"
+        # Weekend × Year_centered
+        # Time_Period × Year_centered
+        formula = "Log_Ratio ~ Day_Type * Time_Period + Day_Type * Year_centered + Time_Period * Year_centered"
         model = smf.mixedlm(formula, m, groups=m["Station"], missing="drop")
         fit = model.fit()
 
-        # Save the full textual summary for inspection
+        # Write summary for review
         with open(os.path.join(OUT_DIR, "mixedlm_summary.txt"), "w") as f:
             f.write(str(fit.summary()))
 
-        # Pull key coefficients into JSON
+        # Collect key results
         params = getattr(fit, "params", pd.Series(dtype=float))
+
+        # Pull slopes of interest
         weekend_slope = None
-        for k in params.index:
+        tod_slopes = {}
+        for k, v in params.items():
             if "Day_Type[T.Weekend]:Year_centered" in k:
-                weekend_slope = float(params[k])
+                weekend_slope = float(v)
+            elif "Time_Period" in k and "Year_centered" in k:
+                tod_slopes[k] = float(v)
 
         results["mixedlm"] = {
             "formula": formula,
@@ -164,7 +170,8 @@ try:
             "n_obs": int(getattr(fit, "nobs", len(m))),
             "fixed_effects": {k: float(v) for k, v in params.items()},
             "year_center_reference": year_center,
-            "weekend_year_interaction": weekend_slope
+            "weekend_year_interaction": weekend_slope,
+            "time_period_year_interactions": tod_slopes
         }
     else:
         results["mixedlm"] = {"note": "too few observations for mixed model"}
